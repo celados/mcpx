@@ -53,6 +53,13 @@ export type ServerConfig = {
   auth: AuthDiscovery;
   discoveredAt?: string;
   tools?: ToolDefinition[];
+  refreshStatus?: ServerRefreshStatus;
+};
+
+export type ServerRefreshStatus = {
+  checkedAt: string;
+  status: "ok" | "reauth-required" | "unreachable";
+  message?: string;
 };
 
 export type RegistryConfig = {

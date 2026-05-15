@@ -79,6 +79,26 @@ export async function refreshServer(server: ServerConfig): Promise<ServerConfig>
   };
 }
 
+export async function reauthenticateServer(
+  name: string,
+  server: ServerConfig,
+): Promise<ServerConfig> {
+  const url = new URL(server.url);
+  const discoveredAuth = await discoverAuth(
+    url,
+    resolveProbeHeaders({ ...server, auth: { kind: "none" } }),
+  );
+  if (discoveredAuth.kind !== "oauth") {
+    throw new Error(`Server "${name}" did not advertise OAuth authentication metadata.`);
+  }
+
+  const auth = await authenticateOAuthServer(name, url, discoveredAuth);
+  return {
+    ...server,
+    auth,
+  };
+}
+
 export function normalizeTools(tools: McpTool[]): ToolDefinition[] {
   const names = tools.map((tool) => tool.name);
   const commandNames = assignCommandNames(names);

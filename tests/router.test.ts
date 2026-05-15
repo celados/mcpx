@@ -9,10 +9,13 @@ describe("router", () => {
       ensureServerReady: async () => {
         throw new Error("not used");
       },
+      reauthenticateServer: async () => {
+        throw new Error("not used");
+      },
       save: async () => {},
     });
 
-    expect(Object.keys(router).sort()).toEqual(["@add", "@remove", "@skill"]);
+    expect(Object.keys(router).sort()).toEqual(["@add", "@refresh", "@remove", "@skill"]);
   });
 
   it("describes server groups by tool count", () => {

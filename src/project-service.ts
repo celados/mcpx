@@ -1,10 +1,11 @@
 import { readRegistryConfig, writeRegistryConfig } from "./config";
-import { refreshServer } from "./discovery";
+import { reauthenticateServer, refreshServer } from "./discovery";
 import type { RegistryConfig, ServerConfig } from "./types";
 
 export type ProjectService = {
   config: RegistryConfig;
   ensureServerReady: (name: string) => Promise<ServerConfig>;
+  reauthenticateServer: (name: string) => Promise<ServerConfig>;
   save: () => Promise<void>;
 };
 
@@ -24,6 +25,18 @@ export async function loadProjectService(): Promise<ProjectService> {
         return server;
       }
       const refreshed = await refreshServer(server);
+      config.servers[name] = refreshed;
+      await writeRegistryConfig(config);
+      return refreshed;
+    },
+    reauthenticateServer: async (name: string) => {
+      const server = config.servers[name];
+      if (!server) {
+        throw new Error(
+          `Unknown MCP server "${name}". Run "mcpx @add --name ${name} --url <url>" first.`,
+        );
+      }
+      const refreshed = await reauthenticateServer(name, server);
       config.servers[name] = refreshed;
       await writeRegistryConfig(config);
       return refreshed;

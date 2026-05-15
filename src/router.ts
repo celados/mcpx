@@ -9,8 +9,14 @@ import { jsonSchemaToStandardSchema } from "./json-schema-standard";
 import { assertServerName } from "./names";
 import { printOutput, type McpxContext } from "./output";
 import { loadProjectService, type ProjectService } from "./project-service";
+import {
+  isReauthRequiredMessage,
+  refreshAllServers,
+  startSchemaRefreshWorkerIfNeeded,
+} from "./schema-refresh";
 import { runSkillCommand } from "./skill-command";
 import { removeOAuthToken } from "./token-cache";
+import type { ServerConfig } from "./types";
 import { MCPX_VERSION } from "./version";
 
 const s = toStandardJsonSchema;
@@ -46,9 +52,13 @@ const skillInput = s(
   }),
 );
 
-export async function runMcpx(argv: string[], cwd: string): Promise<void> {
+export async function runMcpx(argv: string[], cwd: string, mainPath: string): Promise<void> {
   const service = await loadProjectService();
-  await refreshMissingSchemas(service);
+  const isRefreshCommand = argv.includes("@refresh");
+  if (!isRefreshCommand) {
+    await refreshMissingSchemas(service);
+    await startSchemaRefreshWorkerIfNeeded(service.config, mainPath);
+  }
 
   const app = cli(buildRouter(service), {
     name: "mcpx",
@@ -96,6 +106,10 @@ function buildRouter(service: ProjectService): Router {
         examples: ["mcpx @remove --name posthog"],
       })
       .input(removeInput),
+    "@refresh": c.meta({
+      description: "Refresh all registered MCP server schemas and report auth status.",
+      examples: ["mcpx @refresh"],
+    }),
     "@skill": c
       .meta({
         description:
@@ -179,7 +193,13 @@ function buildHandlers(service: ProjectService, cwd: string): Record<string, unk
         options: HandlerOptions<Record<string, unknown>>,
       ) => {
         const readyServer = await service.ensureServerReady(serverName);
-        const result = await callMcpTool(readyServer, tool.name, options.input);
+        const result = await callToolWithReauthRetry(
+          service,
+          serverName,
+          readyServer,
+          tool.name,
+          options.input,
+        );
         await printOutput(result, options.context);
       };
     }
@@ -227,11 +247,32 @@ function buildHandlers(service: ProjectService, cwd: string): Record<string, unk
     );
   };
 
+  handlers["@refresh"] = async (options: HandlerOptions<Record<string, never>>) => {
+    await printOutput(await refreshAllServers(), options.context);
+  };
+
   handlers["@skill"] = async (options: HandlerOptions<{ server?: string | string[] }>) => {
     await runSkillCommand(service, cwd, options.input);
   };
 
   return handlers;
+}
+
+async function callToolWithReauthRetry(
+  service: ProjectService,
+  serverName: string,
+  server: ServerConfig,
+  toolName: string,
+  input: Record<string, unknown>,
+): Promise<unknown> {
+  try {
+    return await callMcpTool(server, toolName, input);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    if (!isReauthRequiredMessage(message)) throw error;
+    const reauthenticated = await service.reauthenticateServer(serverName);
+    return callMcpTool(reauthenticated, toolName, input);
+  }
 }
 
 async function refreshMissingSchemas(service: ProjectService): Promise<void> {

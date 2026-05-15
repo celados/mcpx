@@ -122,6 +122,11 @@ Focus on an internal mcpx command:
 mcpx --schema='.["@add"]'
 ```
 
+mcpx caches discovered tool schemas in the global registry. Cached schemas older
+than one day are refreshed opportunistically in a single background worker when
+mcpx starts, so normal commands do not block on schema discovery. Servers that
+have not discovered any tools yet are still retried synchronously during startup.
+
 ## Control Commands
 
 mcpx control commands use the `@` namespace so they do not collide with server
@@ -130,10 +135,15 @@ names:
 ```bash
 mcpx @add --name <server> --url <mcp-url>
 mcpx @remove --name <server>
+mcpx @refresh
 mcpx @skill
 ```
 
 Server names cannot start with `@`.
+
+`@refresh` checks every registered MCP server, repairs OAuth state first,
+refreshes cached tool schemas after auth is ready, and reports servers that
+still require re-authentication. It may open a browser for interactive OAuth.
 
 ## Authentication
 
