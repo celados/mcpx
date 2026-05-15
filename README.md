@@ -186,6 +186,10 @@ This writes:
 The generated skill instructs agents to discover tools with focused schema
 selectors and call MCP tools through mcpx.
 
+## Skill
+
+General mcpx skill definition lives at `skills/mcpx/SKILL.md`.
+
 ## License
 
 MIT

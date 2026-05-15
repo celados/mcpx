@@ -8,8 +8,8 @@
   "type": "module",
   "scripts": {
     "build": "./scripts/build.sh",
-    "check": "bun run typecheck && bun test && bunx oxfmt --check package.json tsconfig.json README.md .gitignore src tests",
-    "format": "bunx oxfmt package.json tsconfig.json README.md .gitignore src tests",
+    "check": "bun run typecheck && bun test && bunx oxfmt --check package.json tsconfig.json README.md .gitignore src tests skills",
+    "format": "bunx oxfmt package.json tsconfig.json README.md .gitignore src tests skills",
     "typecheck": "tsgo --project tsconfig.json --noEmit",
     "test": "bun test"
   },
