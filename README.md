@@ -184,7 +184,7 @@ mcpx posthog projects-get --raw
 Generate a project-local skill that tells agents which global MCP servers to use:
 
 ```bash
-mcpx @skill --server posthog --server sentry
+mcpx @skill --servers posthog,sentry
 ```
 
 This writes:

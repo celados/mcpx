@@ -77,7 +77,7 @@ project to expose only that approved set to agents, generate a project-local mcp
 skill:
 
 ```bash
-mcpx @skill --server posthog --server sentry
+mcpx @skill --servers posthog,sentry
 ```
 
 This writes:

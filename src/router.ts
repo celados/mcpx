@@ -48,7 +48,12 @@ const removeInput = s(
 
 const skillInput = s(
   v.object({
-    server: v.optional(v.array(v.string())),
+    servers: v.optional(
+      v.pipe(
+        v.string(),
+        v.description("Comma-separated MCP server names, for example posthog,sentry"),
+      ),
+    ),
   }),
 );
 
@@ -114,7 +119,7 @@ function buildRouter(service: ProjectService): Router {
       .meta({
         description:
           "Generate a project skill that teaches agents which global MCP servers to use.",
-        examples: ["mcpx @skill", "mcpx @skill --server posthog --server sentry"],
+        examples: ["mcpx @skill", "mcpx @skill --servers posthog,sentry"],
       })
       .input(skillInput),
   };
@@ -251,7 +256,7 @@ function buildHandlers(service: ProjectService, cwd: string): Record<string, unk
     await printOutput(await refreshAllServers(), options.context);
   };
 
-  handlers["@skill"] = async (options: HandlerOptions<{ server?: string | string[] }>) => {
+  handlers["@skill"] = async (options: HandlerOptions<{ servers?: string }>) => {
     await runSkillCommand(service, cwd, options.input);
   };
 

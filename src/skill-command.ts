@@ -4,7 +4,7 @@ import { writeMcpxSkill } from "./skill-template";
 import type { ProjectService } from "./project-service";
 
 export type SkillCommandInput = {
-  server?: string | string[];
+  servers?: string;
 };
 
 export async function runSkillCommand(
@@ -20,9 +20,9 @@ export async function runSkillCommand(
   }
 
   const selectedServers =
-    input.server === undefined
+    input.servers === undefined
       ? await promptForServers(availableServers)
-      : normalizeSelectedServers(input.server, availableServers);
+      : normalizeSelectedServers(input.servers, availableServers);
 
   const filePath = await writeMcpxSkill({ cwd, servers: selectedServers });
   console.log(`Wrote ${filePath}`);
@@ -43,9 +43,9 @@ async function promptForServers(availableServers: string[]): Promise<string[]> {
   return result;
 }
 
-function normalizeSelectedServers(value: string | string[], availableServers: string[]): string[] {
-  const selected = (Array.isArray(value) ? value : [value])
-    .flatMap((entry) => entry.split(","))
+function normalizeSelectedServers(value: string, availableServers: string[]): string[] {
+  const selected = value
+    .split(",")
     .map((entry) => entry.trim())
     .filter(Boolean);
 
