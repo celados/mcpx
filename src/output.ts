@@ -74,7 +74,17 @@ async function printDaemonOutput(value: DaemonOutputEnvelope, context: McpxConte
 
 function formatNotifications(notifications: McpNotification[]): string[] {
   if (notifications.length === 0) return [];
-  return [`@notification: ${JSON.stringify(notifications)}`];
+  return [`@notification: ${JSON.stringify(notifications.map(normalizeNotificationForOutput))}`];
+}
+
+function normalizeNotificationForOutput(notification: McpNotification): McpNotification {
+  const normalized: McpNotification & { aggregatedCount?: number } = {
+    method: notification.method,
+  };
+  const record = notification as McpNotification & { aggregatedCount?: number };
+  if ("params" in notification) normalized.params = notification.params;
+  if (record.aggregatedCount !== undefined) normalized.aggregatedCount = record.aggregatedCount;
+  return normalized;
 }
 
 function isStructuredDaemonResult(value: unknown): boolean {

@@ -9,6 +9,7 @@ import {
   type ClientMessage,
   type DaemonMessage,
   type DaemonStatus,
+  type McpNotification,
 } from "./daemon-protocol";
 import { connectMcpClient, listAllMcpTools, type McpConnection } from "./mcp-client";
 import { createNotificationBuffer, type NotificationBuffer } from "./notifications";
@@ -355,13 +356,23 @@ function recordNotification(
   session: ManagedSession,
   notification: { method: string; params?: unknown },
 ): void {
+  const normalized = normalizeNotification(notification);
   if (session.currentBuffer) {
-    session.currentBuffer.add(notification);
+    session.currentBuffer.add(normalized);
     return;
   }
-  if (notification.method === "notifications/tools/list_changed") {
+  if (normalized.method === "notifications/tools/list_changed") {
     session.pendingToolsChanged = true;
   }
+}
+
+function normalizeNotification(notification: {
+  method: string;
+  params?: unknown;
+}): McpNotification {
+  const normalized: McpNotification = { method: notification.method };
+  if ("params" in notification) normalized.params = notification.params;
+  return normalized;
 }
 
 function attachStderrLog(session: ManagedSession, connection: ConnectedSession): void {

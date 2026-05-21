@@ -1,6 +1,8 @@
 import { describe, expect, it } from "bun:test";
 
+import { daemonOutputEnvelope } from "../src/daemon-result";
 import { createNotificationBuffer } from "../src/notifications";
+import { printOutput } from "../src/output";
 
 describe("notification buffer", () => {
   it("aggregates intermediate progress notifications by token", () => {
@@ -38,4 +40,44 @@ describe("notification buffer", () => {
 
     expect(buffer.toolsChanged()).toBe(true);
   });
+
+  it("does not expose JSON-RPC transport fields in rendered notifications", async () => {
+    const log = captureConsoleLog();
+    try {
+      await printOutput(
+        daemonOutputEnvelope({
+          result: { content: [{ type: "text", text: "ok" }] },
+          notifications: [
+            {
+              method: "notifications/custom/event",
+              params: { ok: true },
+              jsonrpc: "2.0",
+            } as never,
+          ],
+        }),
+        { output: "toon" },
+      );
+
+      expect(log.calls.map((call) => call[0])).toEqual([
+        "ok",
+        '@notification: [{"method":"notifications/custom/event","params":{"ok":true}}]',
+      ]);
+    } finally {
+      log.restore();
+    }
+  });
 });
+
+function captureConsoleLog(): { calls: unknown[][]; restore: () => void } {
+  const original = console.log;
+  const calls: unknown[][] = [];
+  console.log = (...args: unknown[]) => {
+    calls.push(args);
+  };
+  return {
+    calls,
+    restore: () => {
+      console.log = original;
+    },
+  };
+}
