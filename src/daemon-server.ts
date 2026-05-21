@@ -1,6 +1,8 @@
 import fs from "node:fs/promises";
+import path from "node:path";
 import net, { type Socket } from "node:net";
 import { createHash } from "node:crypto";
+import { tmpdir } from "node:os";
 
 import { ensureDaemonDir, daemonLogPath, daemonSocketPath, serverLogPath } from "./daemon-paths";
 import { readJsonLines, requestJsonLine, writeJsonLine } from "./daemon-io";
@@ -173,7 +175,7 @@ async function callTool(
       session.currentBuffer = message.notificationMode === "discard" ? undefined : buffer;
       try {
         const result = await callToolWithRetainedSessionFallback(session, message, buffer);
-        const notifications = buffer.flush();
+        const notifications = await flushNotifications(buffer);
         const toolsChanged = buffer.toolsChanged() || session.pendingToolsChanged;
         session.pendingToolsChanged = false;
         return { result, notifications, toolsChanged };
@@ -373,6 +375,18 @@ function normalizeNotification(notification: {
   const normalized: McpNotification = { method: notification.method };
   if ("params" in notification) normalized.params = notification.params;
   return normalized;
+}
+
+async function flushNotifications(buffer: NotificationBuffer): Promise<McpNotification[]> {
+  const notifications = buffer.flush();
+  if (!buffer.isOversize()) return notifications;
+
+  const json = JSON.stringify(notifications, null, 2);
+  const hash = createHash("sha256").update(json).digest("hex").slice(0, 16);
+  const filePath = path.join(tmpdir(), `mcpx-notifications-${hash}.json`);
+  // Stable filenames make repeated oversize notification payloads dedupe naturally.
+  await fs.writeFile(filePath, `${json}\n`, "utf8");
+  return [{ method: "$oversize", params: { savedTo: filePath } }];
 }
 
 function attachStderrLog(session: ManagedSession, connection: ConnectedSession): void {

@@ -80,6 +80,43 @@ mcpx <server> <tool> --input @- <<'JSON'
 JSON
 \`\`\`
 
+## Notifications
+
+Most tool calls emit no notifications and this section never applies. When an
+MCP server pushes events during a call (progress, schema changes, custom
+events), mcpx merges them into default structured output under \`@notifications\`:
+
+\`\`\`
+count: 1
+@notifications[1]{method,params}:
+  notifications/progress,{progressToken:"...",progress:3,total:4,message:"step 3"}
+\`\`\`
+
+For non-JSON text, binary, or mixed content, mcpx falls back to a trailing
+sentinel line:
+
+\`\`\`
+<tool result lines>
+@notification: [{"method":"notifications/progress","params":{...}}]
+\`\`\`
+
+Each entry has \`method\` plus method-specific \`params\`. Special cases:
+
+- \`notifications/progress\` may carry \`aggregatedCount\` on the last entry per progress token, meaning intermediate progress was collapsed (first and last preserved verbatim).
+- \`notifications/tools/list_changed\` is handled by mcpx automatically; no agent action required.
+- \`$oversize\` appears in raw mode when the buffer cap was reached; default output renders it as \`notifications oversize, saved to <path>\`.
+
+In \`--raw\` mode with a structured result and non-empty notifications, the
+sentinel line is replaced by a JSON envelope:
+
+\`\`\`json
+{ "result": <tool-result>, "notifications": [ ... ] }
+\`\`\`
+
+Ignore notifications unless the task specifically depends on progress or
+server events. Parse only when \`@notifications\`, the sentinel line, or the raw
+envelope is present.
+
 Do not hand-edit MCP configuration in this project. Servers are registered in the user's global mcpx registry.
 `;
 }

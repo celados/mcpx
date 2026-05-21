@@ -2,6 +2,7 @@ import fs from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 
+import { decode } from "@toon-format/toon";
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 
 const mainPath = path.join(import.meta.dir, "..", "src", "main.ts");
@@ -39,14 +40,33 @@ describe("notification fixture dogfood", () => {
       tools: 5,
     });
 
-    const progress = JSON.parse(
+    const progress = decode(
+      (await runMcpx(["notification-fixture", "progress-stream", "--count", "4"])).stdout,
+    ) as Record<string, unknown>;
+    expect(progress).toMatchObject({
+      tool: "progress-stream",
+      count: 4,
+      "@notifications": [
+        {
+          method: "notifications/progress",
+          params: expect.objectContaining({ progress: 1, total: 4, message: "step 1" }),
+        },
+        {
+          method: "notifications/progress",
+          params: expect.objectContaining({ progress: 4, total: 4, message: "step 4" }),
+          aggregatedCount: 2,
+        },
+      ],
+    });
+
+    const progressRaw = JSON.parse(
       (await runMcpx(["notification-fixture", "progress-stream", "--count", "4", "--raw"])).stdout,
     );
-    expect(progress.result.structuredContent).toEqual({
+    expect(progressRaw.result.structuredContent).toEqual({
       tool: "progress-stream",
       count: 4,
     });
-    expect(progress.notifications).toEqual([
+    expect(progressRaw.notifications).toEqual([
       {
         method: "notifications/progress",
         params: expect.objectContaining({ progress: 1, total: 4, message: "step 1" }),
@@ -75,12 +95,19 @@ describe("notification fixture dogfood", () => {
       },
     ]);
 
-    const flood = JSON.parse(
-      (await runMcpx(["notification-fixture", "flood-notify", "--raw"])).stdout,
+    const flood = decode(
+      (await runMcpx(["notification-fixture", "flood-notify"])).stdout,
+    ) as Record<string, unknown>;
+    const oversizeMessage = String(flood["@notifications"]);
+    expect(oversizeMessage).toMatch(
+      /^notifications oversize, saved to .+mcpx-notifications-.+\.json$/,
     );
-    expect(flood.notifications.at(-1)).toMatchObject({
-      method: "$truncated",
-      params: { droppedCount: expect.any(Number), droppedBytes: expect.any(Number) },
+    const savedTo = oversizeMessage.replace("notifications oversize, saved to ", "");
+    const savedNotifications = JSON.parse(await fs.readFile(savedTo, "utf8"));
+    expect(savedNotifications).toHaveLength(120);
+    expect(savedNotifications[0]).toMatchObject({
+      method: "notifications/custom/flood",
+      params: { index: 0 },
     });
 
     const beforeIdle = await readRegisteredServerDiscoveredAt();

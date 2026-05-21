@@ -19,7 +19,7 @@ export type McpNotification =
       aggregatedCount?: number;
     }
   | { method: "notifications/tools/list_changed"; params?: unknown }
-  | { method: "$truncated"; params: { droppedCount: number; droppedBytes: number } }
+  | { method: "$oversize"; params: { savedTo: string } }
   | { method: string; params?: unknown };
 
 export type DaemonStatus = {

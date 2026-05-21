@@ -60,10 +60,19 @@ export async function printOutput(value: unknown, context: McpxContext): Promise
 }
 
 async function printDaemonOutput(value: DaemonOutputEnvelope, context: McpxContext): Promise<void> {
-  const notifications = value.notifications;
+  const notifications = value.notifications.map(normalizeNotificationForOutput);
   if (context.output === "raw" && isStructuredDaemonResult(value.result)) {
     console.log(JSON.stringify({ result: value.result, notifications }, null, 2));
     return;
+  }
+
+  if (context.output === "toon") {
+    // #15 only merges object-shaped results; text/binary normalization is a follow-up.
+    const resultObject = resultAsMergeableObject(value.result);
+    if (resultObject) {
+      console.log(encode(mergeNotifications(resultObject, notifications)));
+      return;
+    }
   }
 
   await printOutput(value.result, context);
@@ -74,7 +83,7 @@ async function printDaemonOutput(value: DaemonOutputEnvelope, context: McpxConte
 
 function formatNotifications(notifications: McpNotification[]): string[] {
   if (notifications.length === 0) return [];
-  return [`@notification: ${JSON.stringify(notifications.map(normalizeNotificationForOutput))}`];
+  return [`@notification: ${JSON.stringify(notifications)}`];
 }
 
 function normalizeNotificationForOutput(notification: McpNotification): McpNotification {
@@ -85,6 +94,37 @@ function normalizeNotificationForOutput(notification: McpNotification): McpNotif
   if ("params" in notification) normalized.params = notification.params;
   if (record.aggregatedCount !== undefined) normalized.aggregatedCount = record.aggregatedCount;
   return normalized;
+}
+
+function resultAsMergeableObject(result: unknown): Record<string, unknown> | undefined {
+  if (!isMcpToolResult(result)) return isRecord(result) ? result : undefined;
+  if (isRecord(result.structuredContent)) return result.structuredContent;
+
+  const content = result.content ?? [];
+  if (content.length !== 1) return undefined;
+  const [item] = content;
+  if (item?.type !== "text" || typeof item.text !== "string") return undefined;
+  const parsed = parseJsonText(item.text);
+  return isRecord(parsed) ? parsed : undefined;
+}
+
+function mergeNotifications(
+  result: Record<string, unknown>,
+  notifications: McpNotification[],
+): Record<string, unknown> {
+  return {
+    ...result,
+    "@notifications": notificationOutputValue(notifications),
+  };
+}
+
+function notificationOutputValue(notifications: McpNotification[]): unknown {
+  const oversize = notifications.find(
+    (notification): notification is Extract<McpNotification, { method: "$oversize" }> =>
+      notification.method === "$oversize",
+  );
+  if (oversize) return `notifications oversize, saved to ${oversize.params.savedTo}`;
+  return notifications;
 }
 
 function isStructuredDaemonResult(value: unknown): boolean {
@@ -247,6 +287,10 @@ function isMcpToolResult(value: unknown): value is McpToolResult {
 }
 
 function isMcpContent(value: unknown): value is McpContent {
+  return !!value && typeof value === "object" && !Array.isArray(value);
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
   return !!value && typeof value === "object" && !Array.isArray(value);
 }
 

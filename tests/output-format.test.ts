@@ -1,5 +1,6 @@
 import { describe, expect, it } from "bun:test";
 
+import { decode } from "@toon-format/toon";
 import { formatMcpContent, printOutput } from "../src/output";
 import { __test } from "../src/router";
 
@@ -125,6 +126,71 @@ describe("output format", () => {
         "ok",
         '@notification: [{"method":"notifications/tools/list_changed"}]',
       ]);
+    } finally {
+      log.restore();
+    }
+  });
+
+  it("merges structured daemon notifications into the default TOON object", async () => {
+    const log = captureConsoleLog();
+    try {
+      await printOutput(
+        {
+          __mcpxDaemonResponse: true,
+          result: { structuredContent: { count: 1 } },
+          notifications: [{ method: "notifications/tools/list_changed" }],
+        },
+        { output: "toon" },
+      );
+
+      expect(decode(String(log.calls[0]?.[0]))).toEqual({
+        count: 1,
+        "@notifications": [{ method: "notifications/tools/list_changed" }],
+      });
+    } finally {
+      log.restore();
+    }
+  });
+
+  it("merges JSON text daemon notifications into the default TOON object", async () => {
+    const log = captureConsoleLog();
+    try {
+      await printOutput(
+        {
+          __mcpxDaemonResponse: true,
+          result: { content: [{ type: "text", text: '{"count":1}' }] },
+          notifications: [{ method: "notifications/custom/event", params: { ok: true } }],
+        },
+        { output: "toon" },
+      );
+
+      expect(decode(String(log.calls[0]?.[0]))).toEqual({
+        count: 1,
+        "@notifications": [{ method: "notifications/custom/event", params: { ok: true } }],
+      });
+    } finally {
+      log.restore();
+    }
+  });
+
+  it("renders oversize notifications as a saved-file message in default TOON output", async () => {
+    const log = captureConsoleLog();
+    try {
+      await printOutput(
+        {
+          __mcpxDaemonResponse: true,
+          result: { structuredContent: { count: 1 } },
+          notifications: [
+            { method: "$oversize", params: { savedTo: "/tmp/mcpx-notifications-a.json" } },
+          ],
+        },
+        { output: "toon" },
+      );
+
+      expect(decode(String(log.calls[0]?.[0]))).toEqual({
+        count: 1,
+        "@notifications": "notifications oversize, saved to /tmp/mcpx-notifications-a.json",
+      });
     } finally {
       log.restore();
     }

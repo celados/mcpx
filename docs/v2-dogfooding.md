@@ -26,13 +26,13 @@ Expected output:
 `progress-stream` emits `notifications/progress` during a call.
 
 ```sh
-bun src/main.ts notification-fixture progress-stream --count 4 --raw
+bun src/main.ts notification-fixture progress-stream --count 4
 ```
 
 Expected:
 
-- `result.structuredContent.tool` is `progress-stream`.
-- `notifications` contains the first and last progress entries.
+- Output is one TOON object with `tool: progress-stream`.
+- `@notifications` contains the first and last progress entries.
 - The last progress entry has `aggregatedCount: 2`.
 
 `notify-tools-changed` emits `notifications/tools/list_changed` during a call.
@@ -59,13 +59,13 @@ Expected:
 `flood-notify` emits enough notifications to exceed the daemon buffer cap.
 
 ```sh
-bun src/main.ts notification-fixture flood-notify --raw
+bun src/main.ts notification-fixture flood-notify
 ```
 
 Expected:
 
-- The final notification is `$truncated`.
-- `$truncated.params.droppedCount` and `$truncated.params.droppedBytes` are non-zero.
+- Output includes `@notifications: notifications oversize, saved to <path>`.
+- The saved JSON file exists and contains the full notifications array.
 
 `idle-tools-changed` emits `notifications/tools/list_changed` after the current call has completed.
 

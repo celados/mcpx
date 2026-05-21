@@ -103,7 +103,7 @@ type DaemonMessage =
 type McpNotification =
   | { method: "notifications/progress"; params: ProgressParams; aggregatedCount?: number }
   | { method: "notifications/tools/list_changed" }
-  | { method: "$truncated"; params: { droppedCount: number; droppedBytes: number } }
+  | { method: "$oversize"; params: { savedTo: string } }
   | { method: string; params?: unknown };
 ```
 
@@ -255,18 +255,18 @@ Aggregation only applies to `notifications/progress` as defined by MCP `2025-11-
 - Then the daemon buffers it verbatim
 - And does not aggregate or modify
 
-**Scenario: buffer cap triggers synthetic truncation**
+**Scenario: buffer cap triggers oversize file fallback**
 
 - Given a tool call emits notifications totaling more than `NOTIFICATION_BUFFER_CAP_BYTES = 65_536` (64KB) or more than `NOTIFICATION_BUFFER_CAP_COUNT = 100`
-- Then the daemon retains entries up to the cap
-- And appends a synthetic notification:
+- Then the daemon writes the full notifications array to a temp JSON file
+- And replaces the daemon response notifications with:
 
 ```json
-{ "method": "$truncated", "params": { "droppedCount": N, "droppedBytes": B } }
+{ "method": "$oversize", "params": { "savedTo": "/tmp/mcpx-notifications-<hash>.json" } }
 ```
 
-- And does not silently drop entries
-- The synthetic entry is not counted against the cap
+- And the hash is derived from `sha256(JSON.stringify(notifications))`
+- And the file contents are complete JSON, not a truncated suffix
 
 **Scenario: `tools/list_changed` signals CLI for write-back**
 
@@ -298,15 +298,39 @@ Rationale: per-call buffer scoping. Long-lived subscription belongs to V3+.
 
 ## Feature: Output Rendering
 
-CLI handles `response.notifications` rendering. Three branches based on output mode:
+CLI handles `response.notifications` rendering. Default output prefers one merged TOON document
+when the result can be viewed as a single object.
 
-**Scenario: toon/human output appends trailing sentinel**
+**Scenario: default structured output merges notifications**
 
-- Given a tool call returned `{ result: <toon>, notifications: [...non-empty] }`
-- And output mode is toon (default) or human-readable
-- Then CLI prints the toon-rendered result to stdout
+- Given a tool call returned `structuredContent` and non-empty notifications
+- And output mode is default TOON
+- Then CLI prints one TOON object to stdout
+- And the object includes `@notifications: [...]`
+- And no trailing sentinel line is emitted
+
+**Scenario: default JSON text output merges notifications**
+
+- Given a tool call returned exactly one text content item
+- And that text parses as a JSON object
+- And output mode is default TOON
+- Then CLI parses the JSON text and prints one TOON object
+- And the object includes `@notifications: [...]`
+
+**Scenario: default fallback output keeps trailing sentinel**
+
+- Given a tool call returned non-JSON text, binary, or mixed content with notifications
+- And output mode is default TOON
+- Then CLI prints the normal result rendering to stdout
 - And appends a final line: `@notification: [{...}, {...}]`
-- And nothing related to notifications appears elsewhere in stdout or stderr
+
+**Scenario: oversize notifications render as a saved-file message**
+
+- Given daemon response notifications is `[ { "method": "$oversize", "params": { "savedTo": P } } ]`
+- And default output can merge into an object
+- Then the merged object includes `@notifications: "notifications oversize, saved to P"`
+- When default output cannot merge into an object
+- Then the fallback sentinel line reports the same saved-file path
 
 **Scenario: raw structured output uses envelope when notifications present**
 
@@ -360,8 +384,8 @@ V2 protocol negotiation is identical to V1 (single integer version, no per-featu
 
 - HTTP server key derivation: same URL + different auth ref -> different keys; same URL + rotated token value -> same key.
 - Notification aggregation: progress with N=1, N=2, N=10, mixed methods.
-- Buffer cap: synthetic truncation entry inserted at cap.
-- Sentinel rendering for toon / raw structured / raw text.
+- Buffer cap: oversize file fallback marker inserted at cap.
+- Notification rendering for merged default TOON / fallback sentinel / raw structured / raw text.
 
 ### Integration tests
 
@@ -380,7 +404,7 @@ Cases:
 4. Daemon 401 self-eviction.
 5. Notification buffer flush in response.
 6. Progress aggregation.
-7. Buffer truncation with synthetic entry.
+7. Buffer oversize with saved-file marker.
 8. `tools/list_changed` -> response signals CLI; CLI writes back.
 9. Idle `tools/list_changed` carries to the next call.
 10. Other notifications between calls are discarded.

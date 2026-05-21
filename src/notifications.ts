@@ -6,6 +6,7 @@ export const NOTIFICATION_BUFFER_CAP_COUNT = 100;
 export type NotificationBuffer = {
   add: (notification: McpNotification) => void;
   flush: () => McpNotification[];
+  isOversize: () => boolean;
   toolsChanged: () => boolean;
 };
 
@@ -13,8 +14,7 @@ export function createNotificationBuffer(): NotificationBuffer {
   const notifications: McpNotification[] = [];
   const progressByToken = new Map<string, { index: number; seen: number }>();
   let byteLength = 0;
-  let droppedCount = 0;
-  let droppedBytes = 0;
+  let oversize = false;
   let toolsChanged = false;
 
   return {
@@ -43,13 +43,10 @@ export function createNotificationBuffer(): NotificationBuffer {
       append(notification);
     },
     flush() {
-      if (droppedCount > 0) {
-        notifications.push({
-          method: "$truncated",
-          params: { droppedCount, droppedBytes },
-        });
-      }
       return notifications;
+    },
+    isOversize() {
+      return oversize;
     },
     toolsChanged() {
       return toolsChanged;
@@ -62,9 +59,8 @@ export function createNotificationBuffer(): NotificationBuffer {
       notifications.length >= NOTIFICATION_BUFFER_CAP_COUNT ||
       byteLength + bytes > NOTIFICATION_BUFFER_CAP_BYTES
     ) {
-      droppedCount += 1;
-      droppedBytes += bytes;
-      return;
+      // #15 keeps the payload complete; the daemon spills oversize buffers to a temp file.
+      oversize = true;
     }
     notifications.push(notification);
     byteLength += bytes;

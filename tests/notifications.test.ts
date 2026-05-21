@@ -41,6 +41,17 @@ describe("notification buffer", () => {
     expect(buffer.toolsChanged()).toBe(true);
   });
 
+  it("marks oversize buffers without truncating the flushed notifications", () => {
+    const buffer = createNotificationBuffer();
+
+    for (let index = 0; index < 101; index += 1) {
+      buffer.add({ method: "notifications/custom/event", params: { index } });
+    }
+
+    expect(buffer.isOversize()).toBe(true);
+    expect(buffer.flush()).toHaveLength(101);
+  });
+
   it("does not expose JSON-RPC transport fields in rendered notifications", async () => {
     const log = captureConsoleLog();
     try {
