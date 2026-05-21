@@ -109,6 +109,48 @@ describe("output format", () => {
     }
   });
 
+  it("appends notification sentinel for daemon results by default", async () => {
+    const log = captureConsoleLog();
+    try {
+      await printOutput(
+        {
+          __mcpxDaemonResponse: true,
+          result: { content: [{ type: "text", text: "ok" }] },
+          notifications: [{ method: "notifications/tools/list_changed" }],
+        },
+        { output: "toon" },
+      );
+
+      expect(log.calls.map((call) => call[0])).toEqual([
+        "ok",
+        '@notification: [{"method":"notifications/tools/list_changed"}]',
+      ]);
+    } finally {
+      log.restore();
+    }
+  });
+
+  it("wraps raw structured daemon results when notifications are present", async () => {
+    const log = captureConsoleLog();
+    try {
+      await printOutput(
+        {
+          __mcpxDaemonResponse: true,
+          result: { structuredContent: { count: 1 } },
+          notifications: [{ method: "notifications/tools/list_changed" }],
+        },
+        { output: "raw" },
+      );
+
+      expect(JSON.parse(String(log.calls[0]?.[0]))).toEqual({
+        result: { structuredContent: { count: 1 } },
+        notifications: [{ method: "notifications/tools/list_changed" }],
+      });
+    } finally {
+      log.restore();
+    }
+  });
+
   it("keeps --raw from consuming the following command segment", () => {
     expect(__test.normalizeArgv(["--raw", "posthog", "docs-search", "--input", "{}"])).toEqual([
       "posthog",

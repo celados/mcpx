@@ -1,5 +1,6 @@
 import fs from "node:fs/promises";
 import net, { type Socket } from "node:net";
+import { createHash } from "node:crypto";
 
 import { ensureDaemonDir, daemonLogPath, daemonSocketPath, serverLogPath } from "./daemon-paths";
 import { readJsonLines, requestJsonLine, writeJsonLine } from "./daemon-io";
@@ -9,27 +10,40 @@ import {
   type DaemonMessage,
   type DaemonStatus,
 } from "./daemon-protocol";
-import { connectMcpClient, listAllMcpTools } from "./mcp-client";
-import type { McpTool, StdioServerConfig } from "./types";
+import { connectMcpClient, listAllMcpTools, type McpConnection } from "./mcp-client";
+import { createNotificationBuffer, type NotificationBuffer } from "./notifications";
+import type { McpTool, ServerConfig } from "./types";
 import { MCPX_VERSION } from "./version";
 
 const CHILD_IDLE_TTL_MS = 15 * 60 * 1000;
 const DAEMON_IDLE_TTL_MS = 30 * 60 * 1000;
 const CLEANUP_INTERVAL_MS = 30 * 1000;
 const LOG_MAX_BYTES = 10 * 1024 * 1024;
+const EVICT_DEADLINE_MS = 5_000;
 
-type ConnectedSession = Awaited<ReturnType<typeof connectMcpClient>>;
+type ConnectedSession = McpConnection;
 
 type ManagedSession = {
   serverKey: string;
   labels: Set<string>;
-  server: StdioServerConfig;
+  server: ServerConfig;
+  headers?: Record<string, string> | undefined;
   connection?: ConnectedSession;
   connecting?: Promise<ConnectedSession>;
   queue: Promise<unknown>;
   activeCalls: number;
   queuedCalls: number;
   lastUsedAt: number;
+  evicting: boolean;
+  evictCount: number;
+  lastSessionId?: string | undefined;
+  currentBuffer?: NotificationBuffer | undefined;
+};
+
+type DaemonCallResult = {
+  result: unknown;
+  notifications: ReturnType<NotificationBuffer["flush"]>;
+  toolsChanged: boolean;
 };
 
 const sessions = new Map<string, ManagedSession>();
@@ -116,10 +130,13 @@ async function handleMessage(socket: Socket, message: unknown): Promise<void> {
         writeJsonLine(socket, okResponse(await listTools(message)));
         return;
       case "call":
-        writeJsonLine(socket, okResponse(await callTool(message)));
+        writeJsonLine(socket, callResponse(await callTool(message)));
         return;
       case "status":
         writeJsonLine(socket, okResponse(status()));
+        return;
+      case "evictSession":
+        writeJsonLine(socket, okResponse(await evictSession(message)));
         return;
       case "stop":
         writeJsonLine(socket, okResponse({ stopping: true }));
@@ -133,27 +150,71 @@ async function handleMessage(socket: Socket, message: unknown): Promise<void> {
 }
 
 async function listTools(message: Extract<ClientMessage, { op: "listTools" }>): Promise<McpTool[]> {
-  return enqueue(message.serverKey, message.serverName, message.server, async (session) =>
-    listAllMcpTools((await ensureConnected(session)).client),
+  return enqueue(
+    message.serverKey,
+    message.serverName,
+    message.server,
+    message.headers,
+    async (session) => listAllMcpTools((await ensureConnected(session)).client),
   );
 }
 
-async function callTool(message: Extract<ClientMessage, { op: "call" }>): Promise<unknown> {
-  return enqueue(message.serverKey, message.serverName, message.server, async (session) =>
-    (await ensureConnected(session)).client.callTool({
-      name: message.toolName,
-      arguments: message.input,
-    }),
+async function callTool(
+  message: Extract<ClientMessage, { op: "call" }>,
+): Promise<DaemonCallResult> {
+  return enqueue(
+    message.serverKey,
+    message.serverName,
+    message.server,
+    message.headers,
+    async (session) => {
+      const buffer = createNotificationBuffer();
+      session.currentBuffer = message.notificationMode === "discard" ? undefined : buffer;
+      try {
+        const connection = await ensureConnected(session);
+        const result = await connection.client.callTool(
+          {
+            name: message.toolName,
+            arguments: message.input,
+          },
+          undefined,
+          {
+            onprogress: (progress) => {
+              buffer.add({
+                method: "notifications/progress",
+                params: { progressToken: message.callId, ...progress },
+              });
+            },
+          },
+        );
+        const notifications = buffer.flush();
+        return { result, notifications, toolsChanged: buffer.toolsChanged() };
+      } catch (error) {
+        if (session.server.transport === "http" && isUnauthorizedError(error)) {
+          session.lastSessionId = session.connection?.sessionId() ?? session.lastSessionId;
+          await closeSession(session);
+          session.evictCount += 1;
+        }
+        throw error;
+      } finally {
+        delete session.currentBuffer;
+      }
+    },
   );
 }
 
 async function enqueue<T>(
   serverKey: string,
   serverName: string,
-  serverConfig: StdioServerConfig,
+  serverConfig: ServerConfig,
+  headers: Record<string, string> | undefined,
   run: (session: ManagedSession) => Promise<T>,
 ): Promise<T> {
-  const session = getSession(serverKey, serverName, serverConfig);
+  const session = getSession(serverKey, serverName, serverConfig, headers);
+  if (headers) {
+    session.headers = headers;
+    session.connection?.updateHeaders(headers);
+  }
   session.queuedCalls += 1;
 
   const task = session.queue.then(async () => {
@@ -175,11 +236,14 @@ async function enqueue<T>(
 function getSession(
   serverKey: string,
   serverName: string,
-  serverConfig: StdioServerConfig,
+  serverConfig: ServerConfig,
+  headers: Record<string, string> | undefined,
 ): ManagedSession {
   const existing = sessions.get(serverKey);
   if (existing) {
     existing.labels.add(serverName);
+    existing.server = serverConfig;
+    if (headers) existing.headers = headers;
     return existing;
   }
 
@@ -187,10 +251,13 @@ function getSession(
     serverKey,
     labels: new Set([serverName]),
     server: serverConfig,
+    headers,
     queue: Promise.resolve(),
     activeCalls: 0,
     queuedCalls: 0,
     lastUsedAt: Date.now(),
+    evicting: false,
+    evictCount: 0,
   };
   sessions.set(serverKey, session);
   return session;
@@ -199,15 +266,57 @@ function getSession(
 async function ensureConnected(session: ManagedSession): Promise<ConnectedSession> {
   if (session.connection) return session.connection;
   if (!session.connecting) {
-    session.connecting = connectMcpClient(session.server).then((connection) => {
-      session.connection = connection;
-      delete session.connecting;
-      attachStderrLog(session, connection);
-      void logDaemon(`started server=${session.serverKey} pid=${connection.pid() ?? "unknown"}`);
-      return connection;
-    });
+    session.connecting = connectMcpClient(session.server, {
+      headers: session.headers,
+      sessionId: session.lastSessionId,
+      onNotification: (notification) => {
+        session.currentBuffer?.add(notification);
+      },
+    })
+      .catch(async (error) => {
+        if (session.lastSessionId && isRetainedSessionRejected(error)) {
+          delete session.lastSessionId;
+          return connectMcpClient(session.server, {
+            headers: session.headers,
+            onNotification: (notification) => {
+              session.currentBuffer?.add(notification);
+            },
+          });
+        }
+        throw error;
+      })
+      .then((connection) => {
+        session.connection = connection;
+        delete session.connecting;
+        attachStderrLog(session, connection);
+        void logDaemon(`started server=${session.serverKey} pid=${connection.pid() ?? "unknown"}`);
+        return connection;
+      });
   }
   return session.connecting;
+}
+
+async function evictSession(
+  message: Extract<ClientMessage, { op: "evictSession" }>,
+): Promise<Record<string, unknown>> {
+  const session = sessions.get(message.serverKey);
+  if (!session) return { evicted: false };
+  if (session.server.transport === "stdio") return { evicted: false, reason: "stdio" };
+
+  session.evicting = true;
+  const evictTask = session.queue.then(async () => {
+    session.lastSessionId = session.connection?.sessionId() ?? session.lastSessionId;
+    await closeSession(session);
+    session.evictCount += 1;
+    session.evicting = false;
+    return { evicted: true };
+  });
+  session.queue = evictTask.catch(() => {});
+
+  const timeout = new Promise<{ evicted: false; timedOut: true }>((resolve) => {
+    setTimeout(() => resolve({ evicted: false, timedOut: true }), EVICT_DEADLINE_MS).unref();
+  });
+  return Promise.race([evictTask, timeout]);
 }
 
 function attachStderrLog(session: ManagedSession, connection: ConnectedSession): void {
@@ -247,6 +356,9 @@ async function stopDaemon(): Promise<void> {
 }
 
 async function closeSession(session: ManagedSession): Promise<void> {
+  if (session.server.transport === "http") {
+    session.lastSessionId = session.connection?.sessionId() ?? session.lastSessionId;
+  }
   await session.connection?.close().catch(() => {});
   delete session.connection;
   delete session.connecting;
@@ -260,19 +372,37 @@ function status(): DaemonStatus {
     protocolVersion: DAEMON_PROTOCOL_VERSION,
     version: MCPX_VERSION,
     activeServers: sessions.size,
-    servers: [...sessions.values()].map((session) => ({
-      serverKey: session.serverKey,
-      labels: [...session.labels].sort(),
-      pid: session.connection?.pid() ?? null,
-      activeCalls: session.activeCalls,
-      queuedCalls: session.queuedCalls,
-      idleMs: now - session.lastUsedAt,
-    })),
+    servers: [...sessions.values()].map((session) => {
+      const item: DaemonStatus["servers"][number] = {
+        serverKey: session.serverKey,
+        transport: session.server.transport ?? "http",
+        labels: [...session.labels].sort(),
+        activeCalls: session.activeCalls,
+        queuedCalls: session.queuedCalls,
+        idleMs: now - session.lastUsedAt,
+        evictCount: session.evictCount,
+        hasRetainedSessionId: session.lastSessionId !== undefined,
+      };
+      if (session.server.transport === "stdio") {
+        item.pid = session.connection?.pid() ?? null;
+      } else {
+        item.url = redactedUrl(session.server.url);
+      }
+      if (session.lastSessionId) item.sessionIdHash = shortHash(session.lastSessionId);
+      return item;
+    }),
   };
 }
 
 function okResponse(result: unknown): DaemonMessage {
   return { ok: true, result };
+}
+
+function callResponse(result: DaemonCallResult): DaemonMessage {
+  const response: DaemonMessage = { ok: true, result: result.result };
+  if (result.notifications.length > 0) response.notifications = result.notifications;
+  if (result.toolsChanged) response.toolsChanged = true;
+  return response;
 }
 
 function errorResponse(code: string, message: string): DaemonMessage {
@@ -310,7 +440,33 @@ async function rotateLogIfNeeded(filePath: string, incomingBytes: number): Promi
 function isClientMessage(value: unknown): value is ClientMessage {
   if (!value || typeof value !== "object") return false;
   const op = (value as { op?: unknown }).op;
-  return op === "hello" || op === "listTools" || op === "call" || op === "status" || op === "stop";
+  return (
+    op === "hello" ||
+    op === "listTools" ||
+    op === "call" ||
+    op === "status" ||
+    op === "stop" ||
+    op === "evictSession"
+  );
+}
+
+function redactedUrl(value: string): string {
+  const url = new URL(value);
+  return `${url.host}${url.pathname}`;
+}
+
+function shortHash(value: string): string {
+  return createHash("sha256").update(value).digest("hex").slice(0, 16);
+}
+
+function isRetainedSessionRejected(error: unknown): boolean {
+  const message = error instanceof Error ? error.message : String(error);
+  return message.includes("404") || message.toLowerCase().includes("bad session");
+}
+
+function isUnauthorizedError(error: unknown): boolean {
+  const message = error instanceof Error ? error.message : String(error);
+  return message.includes("401") || message.toLowerCase().includes("unauthorized");
 }
 
 async function isLiveSocket(socketPath: string): Promise<boolean> {

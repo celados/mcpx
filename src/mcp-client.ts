@@ -25,6 +25,21 @@ type RawMcpTool = {
   _meta?: unknown;
 };
 
+export type McpConnection = {
+  client: Client;
+  close: () => Promise<void>;
+  pid: () => number | null;
+  stderr: Stream | null;
+  sessionId: () => string | undefined;
+  updateHeaders: (headers: Record<string, string>) => void;
+};
+
+export type ConnectMcpClientOptions = {
+  headers?: Record<string, string> | undefined;
+  sessionId?: string | undefined;
+  onNotification?: (notification: { method: string; params?: unknown }) => void;
+};
+
 export async function withMcpClient<T>(
   server: ServerConfig,
   run: (client: Client) => Promise<T>,
@@ -38,21 +53,25 @@ export async function withMcpClient<T>(
   }
 }
 
-export async function connectMcpClient(server: ServerConfig): Promise<{
-  client: Client;
-  close: () => Promise<void>;
-  pid: () => number | null;
-  stderr: Stream | null;
-}> {
+export async function connectMcpClient(
+  server: ServerConfig,
+  options: ConnectMcpClientOptions = {},
+): Promise<McpConnection> {
   const client = new Client({ name: "mcpx", version: MCPX_VERSION });
+  if (options.onNotification) {
+    client.fallbackNotificationHandler = async (notification) => {
+      options.onNotification?.(notification);
+    };
+  }
+  const httpHeaders =
+    server.transport === "stdio" ? undefined : (options.headers ?? (await resolveHeaders(server)));
   const transport =
     server.transport === "stdio"
       ? new StdioClientTransport(stdioTransportParams(server))
-      : new StreamableHTTPClientTransport(new URL(server.url), {
-          requestInit: {
-            headers: await resolveHeaders(server),
-          },
-        });
+      : new StreamableHTTPClientTransport(
+          new URL(server.url),
+          httpTransportOptions(httpHeaders, options),
+        );
 
   await client.connect(transport as never);
   return {
@@ -69,7 +88,26 @@ export async function connectMcpClient(server: ServerConfig): Promise<{
       server.transport === "stdio" && transport instanceof StdioClientTransport
         ? transport.stderr
         : null,
+    sessionId: () =>
+      transport instanceof StreamableHTTPClientTransport ? transport.sessionId : undefined,
+    updateHeaders: (headers) => {
+      if (!httpHeaders) return;
+      for (const key of Object.keys(httpHeaders)) delete httpHeaders[key];
+      Object.assign(httpHeaders, headers);
+    },
   };
+}
+
+function httpTransportOptions(
+  headers: Record<string, string> | undefined,
+  options: ConnectMcpClientOptions,
+): ConstructorParameters<typeof StreamableHTTPClientTransport>[1] {
+  const transportOptions: NonNullable<
+    ConstructorParameters<typeof StreamableHTTPClientTransport>[1]
+  > = {};
+  if (headers) transportOptions.requestInit = { headers };
+  if (options.sessionId) transportOptions.sessionId = options.sessionId;
+  return transportOptions;
 }
 
 function stdioTransportParams(server: ServerConfig) {
@@ -86,7 +124,7 @@ function stdioTransportParams(server: ServerConfig) {
 }
 
 export async function listMcpTools(server: ServerConfig, serverName = "stdio"): Promise<McpTool[]> {
-  if (server.transport === "stdio" && shouldUseDaemon()) {
+  if (shouldUseDaemon()) {
     return listToolsViaDaemon(server, serverName);
   }
   return withMcpClient(server, async (client) => listAllMcpTools(client));
@@ -121,7 +159,7 @@ export async function callMcpTool(
   input: Record<string, unknown>,
   serverName = "stdio",
 ): Promise<unknown> {
-  if (server.transport === "stdio" && shouldUseDaemon()) {
+  if (shouldUseDaemon()) {
     return callToolViaDaemon(server, serverName, toolName, input);
   }
   return withMcpClient(server, async (client) =>

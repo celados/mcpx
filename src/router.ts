@@ -4,6 +4,7 @@ import * as v from "valibot";
 
 import { removeServerConfig, upsertServerConfig } from "./config";
 import { daemonStatus, stopDaemon } from "./daemon-client";
+import { unwrapDaemonOutput } from "./daemon-result";
 import { runDaemonServer } from "./daemon-server";
 import { callMcpTool } from "./mcp-client";
 import { discoverServer, refreshServer } from "./discovery";
@@ -316,13 +317,29 @@ async function callToolWithReauthRetry(
   input: Record<string, unknown>,
 ): Promise<unknown> {
   try {
-    return await callMcpTool(server, toolName, input, serverName);
+    const result = await callMcpTool(server, toolName, input, serverName);
+    await refreshToolsIfChanged(service, serverName, server, result);
+    return result;
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     if (server.transport === "stdio" || !isReauthRequiredMessage(message)) throw error;
     const reauthenticated = await service.reauthenticateServer(serverName);
-    return callMcpTool(reauthenticated, toolName, input, serverName);
+    const result = await callMcpTool(reauthenticated, toolName, input, serverName);
+    await refreshToolsIfChanged(service, serverName, reauthenticated, result);
+    return result;
   }
+}
+
+async function refreshToolsIfChanged(
+  service: ProjectService,
+  serverName: string,
+  server: ServerConfig,
+  result: unknown,
+): Promise<void> {
+  const daemonResult = unwrapDaemonOutput(result);
+  if (!daemonResult?.toolsChanged) return;
+  service.config.servers[serverName] = await refreshServer(server, serverName);
+  await service.save();
 }
 
 function addDiscoverOptions(name: string, input: AddServerInput) {

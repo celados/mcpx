@@ -4,6 +4,9 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 
 import { decode, encode } from "@toon-format/toon";
+import type { DaemonOutputEnvelope } from "./daemon-result";
+import { unwrapDaemonOutput } from "./daemon-result";
+import type { McpNotification } from "./daemon-protocol";
 
 export type McpxContext = {
   output: "toon" | "raw";
@@ -26,6 +29,12 @@ type McpToolResult = {
 };
 
 export async function printOutput(value: unknown, context: McpxContext): Promise<void> {
+  const daemonResponse = unwrapDaemonOutput(value);
+  if (daemonResponse) {
+    await printDaemonOutput(daemonResponse, context);
+    return;
+  }
+
   if (isMcpToolResult(value)) {
     const isError = value.isError === true;
     const write = isError ? console.error : console.log;
@@ -48,6 +57,31 @@ export async function printOutput(value: unknown, context: McpxContext): Promise
   }
 
   console.log(encode(value));
+}
+
+async function printDaemonOutput(value: DaemonOutputEnvelope, context: McpxContext): Promise<void> {
+  const notifications = value.notifications;
+  if (context.output === "raw" && isStructuredDaemonResult(value.result)) {
+    console.log(JSON.stringify({ result: value.result, notifications }, null, 2));
+    return;
+  }
+
+  await printOutput(value.result, context);
+  for (const line of formatNotifications(notifications)) {
+    console.log(line);
+  }
+}
+
+function formatNotifications(notifications: McpNotification[]): string[] {
+  if (notifications.length === 0) return [];
+  return [`@notification: ${JSON.stringify(notifications)}`];
+}
+
+function isStructuredDaemonResult(value: unknown): boolean {
+  if (!isMcpToolResult(value)) return true;
+  if (value.structuredContent !== undefined && value.structuredContent !== null) return true;
+  const content = value.content ?? [];
+  return !content.some((item) => item.type === "text" && typeof item.text === "string");
 }
 
 export async function formatMcpContent(

@@ -1,4 +1,5 @@
 import fs from "node:fs/promises";
+import http from "node:http";
 import net from "node:net";
 import { tmpdir } from "node:os";
 import path from "node:path";
@@ -20,6 +21,7 @@ let previousArgvOne: string | undefined;
 let home: string;
 let daemon: ReturnType<typeof Bun.spawn> | undefined;
 let fakeDaemon: net.Server | undefined;
+let httpFixture: http.Server | undefined;
 
 describe("mcpxd daemon client", () => {
   beforeEach(async () => {
@@ -36,6 +38,7 @@ describe("mcpxd daemon client", () => {
   afterEach(async () => {
     await stopDaemon(mainPath).catch(() => {});
     await stopFakeDaemon();
+    await stopHttpFixture();
     daemon?.kill();
     daemon = undefined;
     await fs.rm(home, { recursive: true, force: true });
@@ -94,13 +97,31 @@ describe("mcpxd daemon client", () => {
     );
   });
 
+  it("routes HTTP servers through mcpxd and preserves session ids", async () => {
+    await startDaemon();
+    const fixture = await startHttpFixture();
+    const server = {
+      url: fixture.url,
+      auth: { kind: "none" as const },
+    };
+
+    expect((await listMcpTools(server, "http-fixture")).map((tool) => tool.name)).toEqual(["echo"]);
+    expect(text(await callMcpTool(server, "echo", {}, "http-fixture"))).toBe("http-ok");
+
+    expect(fixture.sessions.slice(1).every((session) => session === "session-1")).toBe(true);
+    expect((await daemonStatus(mainPath)).servers[0]).toMatchObject({
+      transport: "http",
+      url: expect.stringContaining("/mcp"),
+    });
+  });
+
   it("stops an incompatible daemon before starting a compatible one", async () => {
     await startFakeDaemon();
     process.argv[1] = mainPath;
 
     expect(text(await callMcpTool(fixtureServer(), "echo", {}, "fixture"))).toBe("ok");
     expect(fakeDaemon).toBeUndefined();
-    expect((await daemonStatus(mainPath)).protocolVersion).toBe(1);
+    expect((await daemonStatus(mainPath)).protocolVersion).toBe(2);
   });
 
   it("reports and stops the daemon", async () => {
@@ -196,4 +217,67 @@ async function stopFakeDaemon(): Promise<void> {
   if (!server) return;
   await new Promise<void>((resolve) => server.close(() => resolve()));
   await fs.rm(daemonSocketPath(), { force: true }).catch(() => {});
+}
+
+async function startHttpFixture(): Promise<{ url: string; sessions: (string | null)[] }> {
+  const sessions: (string | null)[] = [];
+  httpFixture = http.createServer(async (request, response) => {
+    if (request.method !== "POST") {
+      response.writeHead(405).end();
+      return;
+    }
+
+    const body = await readRequestBody(request);
+    const message = JSON.parse(body) as { id?: string | number; method: string };
+    sessions.push(request.headers["mcp-session-id"]?.toString() ?? null);
+
+    if (message.method === "notifications/initialized") {
+      response.writeHead(202, { "mcp-session-id": "session-1" }).end();
+      return;
+    }
+
+    const result =
+      message.method === "initialize"
+        ? {
+            protocolVersion: "2025-11-25",
+            capabilities: { tools: {} },
+            serverInfo: { name: "fixture", version: "1.0.0" },
+          }
+        : message.method === "tools/list"
+          ? { tools: [{ name: "echo", inputSchema: { type: "object" } }] }
+          : { content: [{ type: "text", text: "http-ok" }] };
+
+    response
+      .writeHead(200, {
+        "content-type": "application/json",
+        "mcp-session-id": "session-1",
+      })
+      .end(JSON.stringify({ jsonrpc: "2.0", id: message.id, result }));
+  });
+
+  await new Promise<void>((resolve, reject) => {
+    httpFixture?.once("error", reject);
+    httpFixture?.listen(0, "127.0.0.1", () => {
+      httpFixture?.off("error", reject);
+      resolve();
+    });
+  });
+  const address = httpFixture.address();
+  if (!address || typeof address === "string") throw new Error("HTTP fixture did not bind.");
+  return { url: `http://127.0.0.1:${address.port}/mcp`, sessions };
+}
+
+async function stopHttpFixture(): Promise<void> {
+  const server = httpFixture;
+  httpFixture = undefined;
+  if (!server) return;
+  await new Promise<void>((resolve) => server.close(() => resolve()));
+}
+
+async function readRequestBody(request: http.IncomingMessage): Promise<string> {
+  const chunks: Buffer[] = [];
+  for await (const chunk of request) {
+    chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
+  }
+  return Buffer.concat(chunks).toString("utf8");
 }

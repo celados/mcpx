@@ -2,6 +2,7 @@ import net from "node:net";
 
 import { ensureDaemonDir, daemonSocketPath } from "./daemon-paths";
 import { requestJsonLine } from "./daemon-io";
+import { daemonOutputEnvelope } from "./daemon-result";
 import {
   DAEMON_PROTOCOL_VERSION,
   buildServerKey,
@@ -10,46 +11,69 @@ import {
   type DaemonMessage,
   type DaemonStatus,
 } from "./daemon-protocol";
-import type { McpTool, StdioServerConfig } from "./types";
+import { resolveHeadersWithState } from "./headers";
+import type { McpTool, ServerConfig } from "./types";
 
 const START_TIMEOUT_MS = 3_000;
 const CONNECT_RETRY_MS = 50;
 
 export async function listToolsViaDaemon(
-  server: StdioServerConfig,
+  server: ServerConfig,
   serverName: string,
 ): Promise<McpTool[]> {
-  const result = await requestDaemon(
-    {
-      op: "listTools",
-      callId: crypto.randomUUID(),
-      serverName,
-      serverKey: buildServerKey(server),
-      server,
-    },
-    process.argv[1] ?? import.meta.path,
-  );
+  const context = await daemonRequestContext(server);
+  if (context.authRefreshed) {
+    await evictDaemonSession(
+      context.serverKey,
+      "auth-refreshed",
+      process.argv[1] ?? import.meta.path,
+    );
+  }
+  const message: ClientMessage = {
+    op: "listTools",
+    callId: crypto.randomUUID(),
+    serverName,
+    serverKey: context.serverKey,
+    server,
+  };
+  if (context.headers) message.headers = context.headers;
+  const result = await requestDaemon(message, process.argv[1] ?? import.meta.path);
   return result as McpTool[];
 }
 
 export async function callToolViaDaemon(
-  server: StdioServerConfig,
+  server: ServerConfig,
   serverName: string,
   toolName: string,
   input: Record<string, unknown>,
 ): Promise<unknown> {
-  return requestDaemon(
-    {
-      op: "call",
-      callId: crypto.randomUUID(),
-      serverName,
-      serverKey: buildServerKey(server),
-      server,
-      toolName,
-      input,
-    },
-    process.argv[1] ?? import.meta.path,
-  );
+  const context = await daemonRequestContext(server);
+  if (context.authRefreshed) {
+    await evictDaemonSession(
+      context.serverKey,
+      "auth-refreshed",
+      process.argv[1] ?? import.meta.path,
+    );
+  }
+  const message: ClientMessage = {
+    op: "call",
+    callId: crypto.randomUUID(),
+    serverName,
+    serverKey: context.serverKey,
+    server,
+    toolName,
+    input,
+  };
+  if (context.headers) message.headers = context.headers;
+  const response = await requestDaemonMessage(message, process.argv[1] ?? import.meta.path);
+  if (response.ok && (response.notifications?.length || response.toolsChanged)) {
+    return daemonOutputEnvelope({
+      result: response.result,
+      notifications: response.notifications ?? [],
+      toolsChanged: response.toolsChanged === true,
+    });
+  }
+  return response.ok ? response.result : undefined;
 }
 
 export async function daemonStatus(mainPath: string): Promise<DaemonStatus> {
@@ -60,16 +84,45 @@ export async function stopDaemon(mainPath: string): Promise<unknown> {
   return requestDaemon({ op: "stop" }, mainPath, { start: false });
 }
 
+async function evictDaemonSession(
+  serverKey: string,
+  reason: "auth-refreshed" | "unauthorized" | "manual",
+  mainPath: string,
+): Promise<void> {
+  await requestDaemon({ op: "evictSession", serverKey, reason }, mainPath);
+}
+
+async function daemonRequestContext(server: ServerConfig): Promise<{
+  serverKey: string;
+  headers?: Record<string, string>;
+  authRefreshed: boolean;
+}> {
+  const serverKey = buildServerKey(server);
+  if (server.transport === "stdio") return { serverKey, authRefreshed: false };
+  const resolved = await resolveHeadersWithState(server);
+  return { serverKey, headers: resolved.headers, authRefreshed: resolved.authRefreshed };
+}
+
 async function requestDaemon(
   message: ClientMessage,
   mainPath: string,
   options: { start?: boolean } = {},
 ): Promise<unknown> {
+  const response = await requestDaemonMessage(message, mainPath, options);
+  if (response.ok) return response.result ?? response;
+  throw new Error(response.error.message);
+}
+
+async function requestDaemonMessage(
+  message: ClientMessage,
+  mainPath: string,
+  options: { start?: boolean } = {},
+): Promise<DaemonMessage> {
   const start = options.start ?? true;
   if (start) await ensureDaemon(mainPath);
   return withDaemonConnection(async (socket) => {
     await sendAndExpectOk(socket, helloMessage());
-    return sendAndExpectOk(socket, message);
+    return sendAndExpectDaemonMessage(socket, message);
   });
 }
 
@@ -155,6 +208,16 @@ async function sendAndExpectOk(
     }
     throw new Error(response.error.message);
   }
+  throw new Error("Invalid mcpxd response.");
+}
+
+async function sendAndExpectDaemonMessage(
+  socket: net.Socket,
+  message: ClientMessage,
+): Promise<DaemonMessage> {
+  const response = await requestJsonLine(socket, message);
+  if (isDaemonMessage(response) && response.ok) return response;
+  if (isDaemonMessage(response) && !response.ok) throw new Error(response.error.message);
   throw new Error("Invalid mcpxd response.");
 }
 
