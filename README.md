@@ -44,7 +44,12 @@ mcpx @add --name sentry --url https://mcp.sentry.dev/mcp
 mcpx @add --name cf-docs --url https://docs.mcp.cloudflare.com/mcp
 mcpx @add --name cf-bindings --url https://bindings.mcp.cloudflare.com/mcp
 mcpx @add --name cf-observability --url https://observability.mcp.cloudflare.com/mcp
+mcpx @add --name browser --url http://127.0.0.1:9000/mcp
 ```
+
+> [browser-os](https://www.browseros.com/) is an agent-native browser built on
+> Chrome. It exposes a local MCP server that lets agents control the browser
+> directly — navigating pages, extracting content, and interacting with web UIs.
 
 mcpx stores server configuration in:
 
