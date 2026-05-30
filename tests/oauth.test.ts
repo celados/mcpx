@@ -1,12 +1,77 @@
 import { describe, expect, it } from "bun:test";
 
-import { chooseOAuthScope, parseOAuthTokenResponse, shouldRefreshOAuthToken } from "../src/oauth";
+import {
+  chooseOAuthScope,
+  fetchAuthorizationServerMetadata,
+  parseOAuthTokenResponse,
+  shouldRefreshOAuthToken,
+} from "../src/oauth";
 
 describe("oauth", () => {
   it("uses protected-resource scopes that are supported by the authorization server", () => {
     expect(chooseOAuthScope(["openid", "profile", "alert:read"], ["openid", "alert:read"])).toBe(
       "openid alert:read",
     );
+  });
+
+  it("discovers authorization server metadata for path-based issuers", async () => {
+    const requestedUrls: string[] = [];
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = (async (input: string | URL | Request) => {
+      const url = input.toString();
+      requestedUrls.push(url);
+      if (url !== "https://supabase.example/.well-known/oauth-authorization-server/auth/v1") {
+        return new Response("not found", { status: 404 });
+      }
+      return Response.json({
+        issuer: "https://supabase.example/auth/v1",
+        authorization_endpoint: "https://supabase.example/auth/v1/oauth/authorize",
+        token_endpoint: "https://supabase.example/auth/v1/oauth/token",
+      });
+    }) as typeof fetch;
+
+    try {
+      const metadata = await fetchAuthorizationServerMetadata("https://supabase.example/auth/v1");
+
+      expect(requestedUrls).toEqual([
+        "https://supabase.example/.well-known/oauth-authorization-server/auth/v1",
+      ]);
+      expect(metadata.issuer).toBe("https://supabase.example/auth/v1");
+      expect(metadata.authorizationEndpoint).toBe(
+        "https://supabase.example/auth/v1/oauth/authorize",
+      );
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+
+  it("falls back to issuer-relative metadata used by some hosted OAuth providers", async () => {
+    const requestedUrls: string[] = [];
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = (async (input: string | URL | Request) => {
+      const url = input.toString();
+      requestedUrls.push(url);
+      if (url !== "https://supabase.example/auth/v1/.well-known/oauth-authorization-server") {
+        return new Response("not found", { status: 404 });
+      }
+      return Response.json({
+        issuer: "https://supabase.example/auth/v1",
+        authorization_endpoint: "https://supabase.example/auth/v1/oauth/authorize",
+        token_endpoint: "https://supabase.example/auth/v1/oauth/token",
+      });
+    }) as typeof fetch;
+
+    try {
+      const metadata = await fetchAuthorizationServerMetadata("https://supabase.example/auth/v1");
+
+      expect(requestedUrls).toEqual([
+        "https://supabase.example/.well-known/oauth-authorization-server/auth/v1",
+        "https://supabase.example/auth/v1/.well-known/oauth-authorization-server",
+      ]);
+      expect(metadata.tokenEndpoint).toBe("https://supabase.example/auth/v1/oauth/token");
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
   });
 
   it("refreshes oauth tokens one minute before expiry", () => {

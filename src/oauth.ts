@@ -97,13 +97,44 @@ export async function authenticateOAuthServer(
 export async function fetchAuthorizationServerMetadata(
   issuer: string,
 ): Promise<OAuthServerMetadata> {
-  const metadataUrl = new URL("/.well-known/oauth-authorization-server", issuer);
-  const response = await fetch(metadataUrl, { headers: { Accept: "application/json" } });
-  if (!response.ok) {
-    throw new Error(`Failed to fetch OAuth server metadata from ${metadataUrl}.`);
+  const metadataUrls = authorizationServerMetadataUrls(issuer);
+  const failures: string[] = [];
+
+  for (const metadataUrl of metadataUrls) {
+    const response = await fetch(metadataUrl, { headers: { Accept: "application/json" } });
+    if (!response.ok) {
+      failures.push(`${metadataUrl} (${response.status})`);
+      continue;
+    }
+
+    return parseAuthorizationServerMetadata(await response.json(), metadataUrl.toString(), issuer);
   }
 
-  const metadata = (await response.json()) as Record<string, unknown>;
+  throw new Error(`Failed to fetch OAuth server metadata from ${failures.join(", ")}.`);
+}
+
+function authorizationServerMetadataUrls(issuer: string): URL[] {
+  const issuerUrl = new URL(issuer);
+  const issuerPath = issuerUrl.pathname === "/" ? "" : issuerUrl.pathname;
+  const urls = [
+    // RFC 8414 inserts the well-known path between host and issuer path.
+    new URL(`/.well-known/oauth-authorization-server${issuerPath}`, issuerUrl.origin),
+  ];
+
+  const issuerRelativePath = `${issuerPath.replace(/\/?$/, "/")}.well-known/oauth-authorization-server`;
+  const issuerRelativeUrl = new URL(issuerRelativePath, issuerUrl.origin);
+  if (!urls.some((url) => url.toString() === issuerRelativeUrl.toString())) {
+    urls.push(issuerRelativeUrl);
+  }
+  return urls;
+}
+
+function parseAuthorizationServerMetadata(
+  payload: unknown,
+  metadataUrl: string,
+  issuer: string,
+): OAuthServerMetadata {
+  const metadata = payload as Record<string, unknown>;
   const authorizationEndpoint = stringField(metadata.authorization_endpoint);
   const tokenEndpoint = stringField(metadata.token_endpoint);
   const issuerValue = stringField(metadata.issuer) ?? issuer;
