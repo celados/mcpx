@@ -228,6 +228,13 @@ This writes:
 The generated skill instructs agents to discover tools with focused schema
 selectors and call MCP tools through mcpx.
 
+For temporary agent guidance without writing `.agents/skills`, print a one-server
+skill to stdout:
+
+```bash
+mcpx @skill --show slack
+```
+
 ## Skill
 
 General mcpx skill definition lives at `skills/mcpx/SKILL.md`.

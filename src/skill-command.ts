@@ -1,10 +1,11 @@
 import { cancel, isCancel, multiselect } from "@clack/prompts";
 
-import { readMcpxSkillServers, writeMcpxSkill } from "./skill-template";
+import { buildMcpxSkillMarkdown, readMcpxSkillServers, writeMcpxSkill } from "./skill-template";
 import type { ProjectService } from "./project-service";
 
 export type SkillCommandInput = {
   servers?: string;
+  show?: string;
 };
 
 export async function runSkillCommand(
@@ -17,6 +18,15 @@ export async function runSkillCommand(
     throw new Error(
       'No MCP servers are registered. Run "mcpx @add --name <name> --url <url>" first.',
     );
+  }
+
+  if (input.show !== undefined) {
+    if (input.servers !== undefined) {
+      throw new Error("--show cannot be combined with --servers.");
+    }
+    const server = normalizeShownServer(input.show, availableServers);
+    process.stdout.write(buildMcpxSkillMarkdown([server], { projectLocal: false }));
+    return;
   }
 
   const selectedServers =
@@ -66,4 +76,17 @@ function normalizeSelectedServers(value: string, availableServers: string[]): st
   }
 
   return [...new Set(selected)].sort();
+}
+
+function normalizeShownServer(value: string, availableServers: string[]): string {
+  const server = value.trim();
+  if (server.length === 0 || server.includes(",")) {
+    throw new Error("Select exactly one MCP server for --show.");
+  }
+
+  const available = new Set(availableServers);
+  if (!available.has(server)) {
+    throw new Error(`Unknown MCP server: ${server}`);
+  }
+  return server;
 }

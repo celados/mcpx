@@ -73,6 +73,12 @@ const skillInput = s(
         v.description("Comma-separated MCP server names, for example posthog,sentry"),
       ),
     ),
+    show: v.optional(
+      v.pipe(
+        v.string(),
+        v.description("Print a temporary skill for one MCP server without writing files"),
+      ),
+    ),
   }),
 );
 
@@ -154,9 +160,12 @@ function buildRouter(service: ProjectService): Router {
     ),
     "@skill": c
       .meta({
-        description:
-          "Generate a project skill that teaches agents which global MCP servers to use.",
-        examples: ["mcpx @skill", "mcpx @skill --servers posthog,sentry"],
+        description: "Generate a project skill or print a temporary server skill for agents.",
+        examples: [
+          "mcpx @skill",
+          "mcpx @skill --servers posthog,sentry",
+          "mcpx @skill --show slack",
+        ],
       })
       .input(skillInput),
   };
@@ -302,7 +311,7 @@ function buildHandlers(service: ProjectService, cwd: string): Record<string, unk
     },
   };
 
-  handlers["@skill"] = async (options: HandlerOptions<{ servers?: string }>) => {
+  handlers["@skill"] = async (options: HandlerOptions<{ servers?: string; show?: string }>) => {
     await runSkillCommand(service, cwd, options.input);
   };
 

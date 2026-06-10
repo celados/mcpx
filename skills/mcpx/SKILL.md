@@ -159,6 +159,16 @@ Use the generated project skill as the project-specific router. It should name
 servers the user has already made available; do not use this flow to register or
 authenticate new MCP servers.
 
+For temporary agent guidance without writing `.agents/skills`, print a
+single-server skill to stdout:
+
+```bash
+mcpx @skill --show slack
+```
+
+Use this when the user asks for a one-off service action during the current
+agent session and does not want persistent project skills.
+
 ## References
 
 mcpx maintains a background daemon (`mcpxd`) for session reuse and notification

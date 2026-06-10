@@ -8,6 +8,10 @@ export type SkillTemplateInput = {
   servers: string[];
 };
 
+type SkillMarkdownOptions = {
+  projectLocal?: boolean;
+};
+
 export function mcpxSkillPath(cwd: string): string {
   return path.join(cwd, ".agents", "skills", "mcpx", "SKILL.md");
 }
@@ -22,10 +26,17 @@ export function buildSchemaSelector(servers: string[]): string {
   return `.{${servers.join(",")}}`;
 }
 
-export function buildMcpxSkillMarkdown(servers: string[]): string {
+export function buildMcpxSkillMarkdown(
+  servers: string[],
+  options: SkillMarkdownOptions = {},
+): string {
+  const projectLocal = options.projectLocal ?? true;
   const selector = buildSchemaSelector(servers);
   const serverList = servers.map((server) => `- ${server}`).join("\n");
-  const description = `Use project-approved MCP tools through mcpx. Trigger when the user asks to inspect or operate services backed by these MCP servers: ${servers.join(", ")}.`;
+  const description = projectLocal
+    ? `Use project-approved MCP tools through mcpx. Trigger when the user asks to inspect or operate services backed by these MCP servers: ${servers.join(", ")}.`
+    : `Use configured MCP tools through mcpx. Trigger when the user asks to inspect or operate services backed by these MCP servers: ${servers.join(", ")}.`;
+  const scope = projectLocal ? "project-approved" : "configured";
 
   return `---
 name: ${JSON.stringify("mcpx")}
@@ -35,7 +46,7 @@ description: ${JSON.stringify(description)}
 
 # MCPX
 
-Use this skill when the task needs one of these MCP servers:
+Use this skill when the task needs one of these ${scope} MCP servers:
 
 ${serverList}
 

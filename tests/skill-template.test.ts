@@ -4,7 +4,12 @@ import { join } from "node:path";
 
 import { describe, expect, it } from "bun:test";
 
-import { buildSchemaSelector, parseMcpxSkillServers, writeMcpxSkill } from "../src/skill-template";
+import {
+  buildMcpxSkillMarkdown,
+  buildSchemaSelector,
+  parseMcpxSkillServers,
+  writeMcpxSkill,
+} from "../src/skill-template";
 
 describe("mcpx skill template", () => {
   it("builds argc schema selectors for selected servers", () => {
@@ -29,6 +34,15 @@ describe("mcpx skill template", () => {
     expect(content).toContain("mcpx <server> <tool> --input '{ }'");
     expect(content).toContain("mcpx <server> <tool> --input @payload.json");
     expect(content).toContain("mcpx <server> <tool> --input @- <<'JSON'");
+  });
+
+  it("builds temporary mcpx skill markdown without project-local wording", () => {
+    const content = buildMcpxSkillMarkdown(["slack"], { projectLocal: false });
+
+    expect(content).toContain('servers: ["slack"]');
+    expect(content).toContain("configured MCP servers");
+    expect(content).not.toContain("project-approved MCP servers");
+    expect(content).toContain('mcpx --schema=".slack"');
   });
 
   it("parses selected servers from existing skill frontmatter", () => {
