@@ -1,0 +1,31 @@
+name: AI Agents
+
+# Thin caller — copy this file verbatim into a project's
+# .github/workflows/agents.yml. It should never need to change; template
+# upgrades happen once in celados/gha and apply to every caller automatically.
+
+on:
+  issue_comment:
+    types: [created]
+  pull_request_review_comment:
+    types: [created]
+  pull_request_review:
+    types: [submitted]
+  issues:
+    types: [opened, assigned]
+
+permissions:
+  contents: write
+  pull-requests: write
+  issues: write
+  id-token: write
+  actions: read
+
+jobs:
+  claude:
+    uses: celados/gha/.github/workflows/claude.yml@main
+    secrets: inherit
+
+  codex:
+    uses: celados/gha/.github/workflows/codex.yml@main
+    secrets: inherit
