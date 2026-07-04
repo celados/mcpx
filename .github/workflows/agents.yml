@@ -24,8 +24,13 @@ permissions:
 jobs:
   claude:
     uses: celados/gha/.github/workflows/claude.yml@main
-    secrets: inherit
+    # `secrets: inherit` unreliably resolves org secrets across a
+    # cross-repo reusable-workflow call with a `required: true` secret
+    # (documented GitHub Actions flakiness) — pass explicitly instead.
+    secrets:
+      PRISM_API_KEY: ${{ secrets.PRISM_API_KEY }}
 
   codex:
     uses: celados/gha/.github/workflows/codex.yml@main
-    secrets: inherit
+    secrets:
+      PRISM_API_KEY: ${{ secrets.PRISM_API_KEY }}
