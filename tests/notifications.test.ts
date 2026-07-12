@@ -83,15 +83,20 @@ describe('notification buffer', () => {
 })
 
 function captureConsoleLog(): { calls: unknown[][]; restore: () => void } {
-	const original = console.log
+	const original = process.stdout.write
 	const calls: unknown[][] = []
-	console.log = (...args: unknown[]) => {
-		calls.push(args)
-	}
+	process.stdout.write = ((
+		chunk: string | Uint8Array,
+		callback?: () => void,
+	) => {
+		calls.push([String(chunk).replace(/\n$/, '')])
+		callback?.()
+		return true
+	}) as typeof process.stdout.write
 	return {
 		calls,
 		restore: () => {
-			console.log = original
+			process.stdout.write = original
 		},
 	}
 }

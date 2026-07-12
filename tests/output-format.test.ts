@@ -371,15 +371,20 @@ function captureConsoleLog(): {
 	calls: unknown[][]
 	restore: () => void
 } {
-	const original = console.log
+	const original = process.stdout.write
 	const calls: unknown[][] = []
-	console.log = (...args: unknown[]) => {
-		calls.push(args)
-	}
+	process.stdout.write = ((
+		chunk: string | Uint8Array,
+		callback?: () => void,
+	) => {
+		calls.push([String(chunk).replace(/\n$/, '')])
+		callback?.()
+		return true
+	}) as typeof process.stdout.write
 	return {
 		calls,
 		restore: () => {
-			console.log = original
+			process.stdout.write = original
 		},
 	}
 }
@@ -388,15 +393,20 @@ function captureConsoleError(): {
 	calls: unknown[][]
 	restore: () => void
 } {
-	const original = console.error
+	const original = process.stderr.write
 	const calls: unknown[][] = []
-	console.error = (...args: unknown[]) => {
-		calls.push(args)
-	}
+	process.stderr.write = ((
+		chunk: string | Uint8Array,
+		callback?: () => void,
+	) => {
+		calls.push([String(chunk).replace(/\n$/, '')])
+		callback?.()
+		return true
+	}) as typeof process.stderr.write
 	return {
 		calls,
 		restore: () => {
-			console.error = original
+			process.stderr.write = original
 		},
 	}
 }

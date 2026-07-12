@@ -6,8 +6,10 @@ import { stringify as stringifyYaml } from 'yaml'
 
 import type { McpNotification } from './daemon-protocol'
 import type { DaemonOutputEnvelope } from './daemon-result'
+import type { OutputWriter } from './output-writer'
 
 import { unwrapDaemonOutput } from './daemon-result'
+import { stderrWriter, stdoutWriter } from './output-writer'
 
 export type McpxContext = {
 	output: 'yaml' | 'raw'
@@ -41,7 +43,7 @@ export async function printOutput(
 
 	if (isMcpToolResult(value)) {
 		const isError = value.isError === true
-		const write = isError ? console.error : console.log
+		const write = isError ? stderrWriter : stdoutWriter
 		if (isError) process.exitCode = 1
 
 		await printMcpToolResult(value, context, write)
@@ -49,34 +51,34 @@ export async function printOutput(
 	}
 
 	if (context.output === 'raw') {
-		console.log(JSON.stringify(value, null, 2))
+		await stdoutWriter(JSON.stringify(value, null, 2))
 		return
 	}
 
-	console.log(formatYaml(value))
+	await stdoutWriter(formatYaml(value))
 }
 
 async function printMcpToolResult(
 	value: McpToolResult,
 	context: McpxContext,
-	write: (message?: unknown, ...optionalParams: unknown[]) => void,
+	write: OutputWriter,
 ): Promise<void> {
 	const content = value.content ?? []
 	if (content.length > 0) {
 		for (const line of await formatMcpContent(content, context.output)) {
-			write(line)
+			await write(line)
 		}
 
 		const structured = formatSupplementalStructuredContent(
 			value,
 			context.output,
 		)
-		if (structured) write(structured)
+		if (structured) await write(structured)
 		return
 	}
 
 	if (hasStructuredContent(value)) {
-		write(formatStructuredContent(value, context.output))
+		await write(formatStructuredContent(value, context.output))
 	}
 }
 
@@ -86,7 +88,7 @@ async function printDaemonOutput(
 ): Promise<void> {
 	const notifications = value.notifications.map(normalizeNotificationForOutput)
 	if (context.output === 'raw' && isStructuredDaemonResult(value.result)) {
-		console.log(
+		await stdoutWriter(
 			JSON.stringify({ result: value.result, notifications }, null, 2),
 		)
 		return
@@ -97,14 +99,16 @@ async function printDaemonOutput(
 		// arbitrary text stays untouched so existing text consumers are not wrapped.
 		const resultObject = resultAsMergeableObject(value.result)
 		if (resultObject) {
-			console.log(formatYaml(mergeNotifications(resultObject, notifications)))
+			await stdoutWriter(
+				formatYaml(mergeNotifications(resultObject, notifications)),
+			)
 			return
 		}
 	}
 
 	await printOutput(value.result, context)
 	for (const line of formatNotifications(notifications)) {
-		console.log(line)
+		await stdoutWriter(line)
 	}
 }
 
