@@ -102,7 +102,9 @@ describe('Runtime CLI adapter lifecycle', () => {
 	}, 10_000)
 
 	it('single-flights five explicit refresh CLI processes through one local token request', async () => {
-		const fixture = startHttpFixture()
+		// Keep the flow active while independently booting Bun processes reach the
+		// warm daemon; the assertion is about overlapping callers, not loader speed.
+		const fixture = startHttpFixture({ tokenDelayMs: 500 })
 		await seedExpiredOAuth(fixture.url, fixture.issuer)
 		// Cold-start polling can let the first 25 ms refresh finish before later
 		// processes connect; start the daemon so this test isolates flow sharing.
@@ -235,7 +237,9 @@ function isAlive(pid: number): boolean {
 	}
 }
 
-function startHttpFixture(options: { holdToken?: boolean } = {}): {
+function startHttpFixture(
+	options: { holdToken?: boolean; tokenDelayMs?: number } = {},
+): {
 	url: string
 	issuer: string
 	tokenRequests: () => number
@@ -258,7 +262,7 @@ function startHttpFixture(options: { holdToken?: boolean } = {}): {
 			if (requestUrl.pathname === '/token') {
 				tokenRequests += 1
 				if (options.holdToken) await new Promise(() => {})
-				await Bun.sleep(25)
+				await Bun.sleep(options.tokenDelayMs ?? 25)
 				return Response.json({
 					access_token: 'local-access',
 					refresh_token: 'local-refresh-2',
