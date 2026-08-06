@@ -5,14 +5,7 @@ import { __test } from '../src/router'
 describe('router', () => {
 	it('keeps mcpx control commands under the @ namespace', () => {
 		const router = __test.buildRouter({
-			config: { version: 1, servers: {} },
-			ensureServerReady: async () => {
-				throw new Error('not used')
-			},
-			reauthenticateServer: async () => {
-				throw new Error('not used')
-			},
-			save: async () => {},
+			servers: {},
 		})
 
 		expect(Object.keys(router).sort()).toEqual([

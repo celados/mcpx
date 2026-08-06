@@ -1,4 +1,13 @@
+---
+type: Specification
+title: mcpxd BDD Spec
+status: superseded
+superseded_by: docs/specs/mcp-runtime-upgrade.md
+---
+
 # mcpxd BDD Spec
+
+> Superseded for architecture and ownership. Retained only as historical regression evidence.
 
 ## Purpose
 

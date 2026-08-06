@@ -1,12 +1,10 @@
 #!/usr/bin/env bun
+import { runDaemonServer } from './daemon-server'
 import { runMcpx } from './router'
-import {
-	runSchemaRefreshWorker,
-	shouldRunSchemaRefreshWorker,
-} from './schema-refresh'
 
-if (shouldRunSchemaRefreshWorker()) {
-	await runSchemaRefreshWorker()
+const argv = process.argv.slice(2)
+if (argv[0] === '@daemon' && argv[1] === 'server') {
+	await runDaemonServer()
 } else {
-	await runMcpx(process.argv.slice(2), process.cwd(), import.meta.path)
+	await runMcpx(argv, process.cwd(), import.meta.path)
 }

@@ -7,8 +7,6 @@ import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/
 
 import type { McpTool, ServerConfig, ToolAnnotations } from './types'
 
-import { callToolViaDaemon, listToolsViaDaemon } from './daemon-client'
-import { shouldUseDaemon } from './daemon-protocol'
 import { resolveHeaders } from './headers'
 import { MCPX_VERSION } from './version'
 
@@ -136,11 +134,8 @@ function stdioTransportParams(server: ServerConfig) {
 
 export async function listMcpTools(
 	server: ServerConfig,
-	serverName = 'stdio',
+	_serverName = 'stdio',
 ): Promise<McpTool[]> {
-	if (shouldUseDaemon()) {
-		return listToolsViaDaemon(server, serverName)
-	}
 	return withMcpClient(server, async (client) => listAllMcpTools(client))
 }
 
@@ -175,11 +170,8 @@ export async function callMcpTool(
 	server: ServerConfig,
 	toolName: string,
 	input: Record<string, unknown>,
-	serverName = 'stdio',
+	_serverName = 'stdio',
 ): Promise<unknown> {
-	if (shouldUseDaemon()) {
-		return callToolViaDaemon(server, serverName, toolName, input)
-	}
 	return withMcpClient(server, async (client) =>
 		client.callTool(
 			{ name: toolName, arguments: input },

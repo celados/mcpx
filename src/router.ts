@@ -1,28 +1,29 @@
-import { cancel, isCancel, multiselect } from '@clack/prompts'
+import {
+	cancel,
+	confirm,
+	isCancel,
+	multiselect,
+	note,
+	password,
+	text,
+} from '@clack/prompts'
 import { toStandardJsonSchema } from '@valibot/to-json-schema'
 import { c, cli, createDefaultSchemaExplorer, group, type Router } from 'argc'
 import * as v from 'valibot'
 
-import type { ServerConfig } from './types'
+import type { RuntimeInputRequest, RuntimeIntent } from './runtime-protocol'
+import type { RuntimeRegistrySnapshot } from './runtime-stores'
+import type { RegistryView } from './skill-command'
+import type { RegistryConfig } from './types'
 
-import { removeServerConfig, upsertServerConfig } from './config'
-import { daemonStatus, stopDaemon } from './daemon-client'
-import { unwrapDaemonOutput } from './daemon-result'
+import { notificationModeFromEnv } from './daemon-protocol'
+import { daemonOutputEnvelope } from './daemon-result'
 import { runDaemonServer } from './daemon-server'
-import { discoverServer, refreshServer } from './discovery'
 import { jsonSchemaToStandardSchema } from './json-schema-standard'
-import { callMcpTool } from './mcp-client'
 import { assertServerName } from './names'
 import { printOutput, type McpxContext } from './output'
-import { loadProjectService, type ProjectService } from './project-service'
-import { createRefreshProgressReporter } from './refresh-progress'
-import {
-	isReauthRequiredMessage,
-	refreshAllServers,
-	startSchemaRefreshWorkerIfNeeded,
-} from './schema-refresh'
+import { requestRuntime } from './runtime-client'
 import { runSkillCommand } from './skill-command'
-import { removeOAuthToken } from './token-cache'
 import { MCPX_VERSION } from './version'
 
 const s = toStandardJsonSchema
@@ -107,14 +108,15 @@ export async function runMcpx(
 	cwd: string,
 	mainPath: string,
 ): Promise<void> {
-	const service = await loadProjectService()
-	const isRefreshCommand = argv.includes('@refresh')
-	if (!isRefreshCommand) {
-		await refreshMissingSchemas(service)
-		await startSchemaRefreshWorkerIfNeeded(service.config, mainPath)
+	const snapshot = (await requestRuntime(
+		{ requestId: crypto.randomUUID(), op: 'registrySnapshot' },
+		mainPath,
+	)) as RuntimeRegistrySnapshot
+	const registry: RegistryView = {
+		servers: snapshot.servers as unknown as RegistryConfig['servers'],
 	}
 
-	const app = cli(buildRouter(service), {
+	const app = cli(buildRouter(registry), {
 		name: 'mcpx',
 		version: MCPX_VERSION,
 		description: 'Global MCP registry and agent-facing command surface.',
@@ -137,7 +139,7 @@ export async function runMcpx(
 	}
 
 	await app.run(
-		{ handlers: buildHandlers(service, cwd) } as never,
+		{ handlers: buildHandlers(registry, cwd, mainPath) } as never,
 		normalizedArgv,
 	)
 }
@@ -149,9 +151,9 @@ function normalizeArgv(argv: string[]): string[] | null {
 	return [...argv.filter((arg) => arg !== '--raw'), '--raw']
 }
 
-function buildRouter(service: ProjectService): Router {
+function buildRouter(registry: RegistryView): Router {
 	return {
-		...buildServerRouter(service),
+		...buildServerRouter(registry),
 		'@add': c
 			.meta({
 				description:
@@ -208,9 +210,9 @@ function buildRouter(service: ProjectService): Router {
 	}
 }
 
-function buildServerRouter(service: ProjectService): Record<string, Router> {
+function buildServerRouter(registry: RegistryView): Record<string, Router> {
 	const servers: Record<string, Router> = {}
-	for (const [serverName, server] of Object.entries(service.config.servers)) {
+	for (const [serverName, server] of Object.entries(registry.servers)) {
 		const tools = server.tools ?? []
 		const children: Record<string, Router> = {}
 		for (const tool of tools) {
@@ -275,26 +277,30 @@ function toolAnnotationHints(
 }
 
 function buildHandlers(
-	service: ProjectService,
+	registry: RegistryView,
 	cwd: string,
+	mainPath = process.argv[1] ?? '',
 ): Record<string, unknown> {
 	const handlers: Record<string, unknown> = {}
 
-	for (const [serverName, server] of Object.entries(service.config.servers)) {
+	for (const [serverName, server] of Object.entries(registry.servers)) {
 		const serverHandlers: Record<string, unknown> = {}
 		for (const tool of server.tools ?? []) {
 			serverHandlers[tool.commandName] = async (
 				options: HandlerOptions<Record<string, unknown>>,
 			) => {
-				const readyServer = await service.ensureServerReady(serverName)
-				const result = await callToolWithReauthRetry(
-					service,
-					serverName,
-					readyServer,
-					tool.name,
-					options.input,
+				const result = await requestRuntime(
+					{
+						requestId: crypto.randomUUID(),
+						op: 'call',
+						serverName,
+						toolName: tool.name,
+						input: options.input,
+						notificationMode: notificationModeFromEnv(),
+					},
+					mainPath,
 				)
-				await printOutput(result, options.context)
+				await printOutput(runtimeCallOutput(result), options.context)
 			}
 		}
 		handlers[serverName] = serverHandlers
@@ -303,84 +309,75 @@ function buildHandlers(
 	handlers['@add'] = async (options: HandlerOptions<AddServerInput>) => {
 		const input = options.input
 		const name = assertServerName(input.name)
-		const result = await discoverServer(addDiscoverOptions(name, input))
-		await upsertServerConfig(name, result.server)
-		await printOutput(
-			{
-				name,
-				transport: result.server.transport ?? 'http',
-				status: result.status,
-				auth:
-					result.server.transport === 'stdio' ? undefined : result.server.auth,
-				tools: result.server.tools?.length ?? 0,
-				message: result.message,
-			},
-			options.context,
-		)
+		const discovered = addDiscoverOptions(name, input)
+		const intent: Extract<RuntimeIntent, { op: 'addServer' }> = {
+			requestId: crypto.randomUUID(),
+			op: 'addServer',
+			serverName: name,
+			transport: discovered.transport,
+		}
+		if (discovered.transport === 'stdio') {
+			intent.command = discovered.command
+			if (discovered.args) intent.args = discovered.args
+			if (discovered.env) intent.env = discovered.env
+		} else {
+			intent.url = discovered.url
+			const bearer = normalizeStringList(discovered.bearer)
+			if (bearer) intent.bearer = bearer
+		}
+		await printOutput(await requestRuntime(intent, mainPath), options.context)
 	}
 
 	handlers['@remove'] = async (options: HandlerOptions<{ name?: string }>) => {
 		const rawName = options.input.name
 		const names =
 			rawName === undefined
-				? await promptForServersToRemove(service)
+				? await promptForServersToRemove(registry)
 				: parseRemoveNames(rawName)
 
-		const removals: Array<{
-			name: string
-			removed: boolean
-			tokenRemoved: boolean
-		}> = []
-		for (const name of names) {
-			const removed = await removeServerConfig(name)
-			if (!removed) {
-				throw new Error(`Unknown MCP server "${name}".`)
-			}
-			const tokenRemoved =
-				removed.transport !== 'stdio' && removed.auth.kind === 'oauth-token'
-					? await removeOAuthToken(removed.auth.tokenKey)
-					: false
-			removals.push({ name, removed: true, tokenRemoved })
-		}
-
-		// Preserve the single-server output shape so existing agent consumers keep
-		// working when only one name is supplied.
-		if (removals.length === 1) {
-			await printOutput(removals[0]!, options.context)
-			return
-		}
-		await printOutput({ removed: removals }, options.context)
+		await printOutput(
+			await requestRuntime(
+				{
+					requestId: crypto.randomUUID(),
+					op: 'removeServers',
+					serverNames: names,
+				},
+				mainPath,
+			),
+			options.context,
+		)
 	}
 
 	handlers['@refresh'] = async (
 		options: HandlerOptions<Record<string, never>>,
 	) => {
-		const reporter = createRefreshProgressReporter()
-		const cleanup = () => reporter.dispose()
-		process.once('SIGINT', cleanup)
-		process.once('SIGTERM', cleanup)
-		try {
-			const summary = await refreshAllServers({
-				onProgress: reporter.handle,
-			})
-			await printOutput(summary, options.context)
-		} finally {
-			reporter.dispose()
-			process.off('SIGINT', cleanup)
-			process.off('SIGTERM', cleanup)
-		}
+		await printOutput(
+			await requestRuntime(
+				{ requestId: crypto.randomUUID(), op: 'refreshServers' },
+				mainPath,
+				{ onInput: promptForRuntimeInput },
+			),
+			options.context,
+		)
 	}
 
 	handlers['@daemon'] = {
 		status: async (options: HandlerOptions<Record<string, never>>) => {
 			await printOutput(
-				await daemonStatus(process.argv[1] ?? ''),
+				await requestRuntime(
+					{ requestId: crypto.randomUUID(), op: 'status' },
+					mainPath,
+				),
 				options.context,
 			)
 		},
 		stop: async (options: HandlerOptions<Record<string, never>>) => {
 			await printOutput(
-				await stopDaemon(process.argv[1] ?? ''),
+				await requestRuntime(
+					{ requestId: crypto.randomUUID(), op: 'stop' },
+					mainPath,
+					{ start: false },
+				),
 				options.context,
 			)
 		},
@@ -392,49 +389,73 @@ function buildHandlers(
 	handlers['@skill'] = async (
 		options: HandlerOptions<{ servers?: string; show?: string }>,
 	) => {
-		await runSkillCommand(service, cwd, options.input)
+		await runSkillCommand(registry, cwd, options.input)
 	}
 
 	return handlers
 }
 
-async function callToolWithReauthRetry(
-	service: ProjectService,
-	serverName: string,
-	server: ServerConfig,
-	toolName: string,
-	input: Record<string, unknown>,
+async function promptForRuntimeInput(
+	request: RuntimeInputRequest,
+	signal: AbortSignal,
 ): Promise<unknown> {
-	try {
-		const result = await callMcpTool(server, toolName, input, serverName)
-		await refreshToolsIfChanged(service, serverName, server, result)
-		return result
-	} catch (error) {
-		const message = error instanceof Error ? error.message : String(error)
-		if (server.transport === 'stdio' || !isReauthRequiredMessage(message))
-			throw error
-		const reauthenticated = await service.reauthenticateServer(serverName)
-		const result = await callMcpTool(
-			reauthenticated,
-			toolName,
-			input,
-			serverName,
-		)
-		await refreshToolsIfChanged(service, serverName, reauthenticated, result)
-		return result
+	if (request.type !== 'oauth-client') {
+		return { cancelled: true, reason: 'Unsupported Runtime input request.' }
 	}
+	if (!process.stdin.isTTY) {
+		return { cancelled: true, reason: 'Interactive terminal required.' }
+	}
+	note(
+		[
+			'This OAuth server does not support dynamic client registration.',
+			'Add and save this exact Redirect URL in the provider app settings.',
+			`Redirect URL: ${request.redirectUri}`,
+			`Authorization server: ${request.issuer}`,
+			request.scopes.length
+				? `Requested scopes: ${request.scopes.join(', ')}`
+				: '',
+		]
+			.filter(Boolean)
+			.join('\n'),
+		`${request.serverName} OAuth client`,
+	)
+	const configured = await confirm({
+		message: 'I have added and saved this exact Redirect URL',
+		initialValue: false,
+		signal,
+	})
+	if (isCancel(configured) || !configured) return { cancelled: true }
+	const clientId = await text({
+		message: 'OAuth client_id',
+		signal,
+		validate: (value) => (value?.trim() ? undefined : 'client_id is required.'),
+	})
+	if (isCancel(clientId)) return { cancelled: true }
+	const clientSecret = await password({
+		message: 'OAuth client_secret',
+		signal,
+		validate: (value) =>
+			value?.trim() ? undefined : 'client_secret is required.',
+	})
+	if (isCancel(clientSecret)) return { cancelled: true }
+	return { clientId: clientId.trim(), clientSecret: clientSecret.trim() }
 }
 
-async function refreshToolsIfChanged(
-	service: ProjectService,
-	serverName: string,
-	server: ServerConfig,
-	result: unknown,
-): Promise<void> {
-	const daemonResult = unwrapDaemonOutput(result)
-	if (!daemonResult?.toolsChanged) return
-	service.config.servers[serverName] = await refreshServer(server, serverName)
-	await service.save()
+function runtimeCallOutput(value: unknown): unknown {
+	if (!value || typeof value !== 'object' || !('result' in value)) return value
+	const response = value as {
+		result: unknown
+		notifications?: Parameters<typeof daemonOutputEnvelope>[0]['notifications']
+		toolsChanged?: boolean
+	}
+	if (response.notifications?.length || response.toolsChanged) {
+		return daemonOutputEnvelope({
+			result: response.result,
+			notifications: response.notifications ?? [],
+			toolsChanged: response.toolsChanged === true,
+		})
+	}
+	return response.result
 }
 
 function addDiscoverOptions(name: string, input: AddServerInput) {
@@ -484,25 +505,6 @@ function normalizeStringList(
 	return Array.isArray(value) ? value : [value]
 }
 
-async function refreshMissingSchemas(service: ProjectService): Promise<void> {
-	let changed = false
-
-	for (const [name, server] of Object.entries(service.config.servers)) {
-		if (server.tools && server.tools.length > 0) continue
-		try {
-			service.config.servers[name] = await refreshServer(server, name)
-			changed = true
-		} catch {
-			// Keep startup usable when auth is not available yet; add/discover records
-			// the auth state so the next run can retry after credentials are configured.
-		}
-	}
-
-	if (changed) {
-		await service.save()
-	}
-}
-
 export const __test = {
 	buildServerRouter,
 	buildRouter,
@@ -514,9 +516,9 @@ export const __test = {
 }
 
 async function promptForServersToRemove(
-	service: ProjectService,
+	registry: RegistryView,
 ): Promise<string[]> {
-	const names = Object.keys(service.config.servers).sort()
+	const names = Object.keys(registry.servers).sort()
 	if (names.length === 0) {
 		throw new Error('No MCP servers are registered. Nothing to remove.')
 	}
@@ -531,7 +533,7 @@ async function promptForServersToRemove(
 		message:
 			'Select MCP server(s) to remove (space to toggle, enter to confirm)',
 		options: names.map((name) => {
-			const server = service.config.servers[name]!
+			const server = registry.servers[name]!
 			const toolCount = server.tools?.length ?? 0
 			const transport =
 				server.transport === 'stdio' ? 'stdio' : `http (${server.auth.kind})`

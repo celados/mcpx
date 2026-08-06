@@ -3,29 +3,19 @@ import { mkdtemp, readFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
-import type { ProjectService } from '../src/project-service'
+import type { RegistryView } from '../src/skill-command'
 
 import { runSkillCommand } from '../src/skill-command'
 
-function fixtureService(): ProjectService {
+function fixtureService(): RegistryView {
 	return {
-		config: {
-			version: 1,
-			servers: {
-				slack: {
-					transport: 'stdio',
-					command: 'slack-mcp',
-					tools: [],
-				},
+		servers: {
+			slack: {
+				transport: 'stdio',
+				command: 'slack-mcp',
+				tools: [],
 			},
 		},
-		ensureServerReady: async () => {
-			throw new Error('not used')
-		},
-		reauthenticateServer: async () => {
-			throw new Error('not used')
-		},
-		save: async () => {},
 	}
 }
 
