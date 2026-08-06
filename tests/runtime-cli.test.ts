@@ -104,6 +104,9 @@ describe('Runtime CLI adapter lifecycle', () => {
 	it('single-flights five explicit refresh CLI processes through one local token request', async () => {
 		const fixture = startHttpFixture()
 		await seedExpiredOAuth(fixture.url, fixture.issuer)
+		// Cold-start polling can let the first 25 ms refresh finish before later
+		// processes connect; start the daemon so this test isolates flow sharing.
+		expect((await runCli(['@daemon', 'status', '--raw'])).exitCode).toBe(0)
 		const refreshes = Array.from({ length: 5 }, () =>
 			spawnObserved(['@refresh', '--raw']),
 		)
