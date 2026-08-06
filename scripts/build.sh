@@ -103,11 +103,12 @@ ENTRY_NAME="$(basename "$OUTFILE")"
 
 mkdir -p "$OUTDIR"
 rm -f "$OUTFILE" "$OUTFILE.map"
+# The installer fetches one release asset, so linked maps make every installed
+# invocation warn about a file that can never be present.
 bun build ./src/main.ts \
   --target=bun \
   --format=esm \
   --minify \
-  --sourcemap=linked \
   --outdir="$OUTDIR" \
   --entry-naming="$ENTRY_NAME"
 chmod +x "$OUTFILE"
