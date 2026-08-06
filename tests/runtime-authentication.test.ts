@@ -120,7 +120,17 @@ describe('Runtime explicit authentication', () => {
 		})
 		const runtime = new McpRuntime(stores, { authentication })
 		const first = createInMemoryRuntimeCaller('first')
-		const second = createInMemoryRuntimeCaller('second')
+		const secondBase = createInMemoryRuntimeCaller('second')
+		let secondJoined = false
+		const second = {
+			...secondBase,
+			onDisconnect: (listener: () => void) => {
+				// Opening the callback only proves the first waiter joined; wait for the
+				// second subscription so slower CI runners cannot disconnect too early.
+				secondJoined = true
+				return secondBase.onDisconnect(listener)
+			},
+		}
 		const firstRun = runtime.handle(
 			{ requestId: 'first', op: 'refreshServers', serverNames: ['fixture'] },
 			first,
@@ -129,7 +139,7 @@ describe('Runtime explicit authentication', () => {
 			{ requestId: 'second', op: 'refreshServers', serverNames: ['fixture'] },
 			second,
 		)
-		await waitFor(() => callbackOpen)
+		await waitFor(() => callbackOpen && secondJoined)
 
 		first.disconnect()
 		expect(signal?.aborted).toBe(false)
