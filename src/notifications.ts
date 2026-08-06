@@ -71,6 +71,20 @@ export function createNotificationBuffer(): NotificationBuffer {
 	}
 }
 
+export async function flushNotificationBuffer(
+	buffer: NotificationBuffer,
+): Promise<McpNotification[]> {
+	const notifications = buffer.flush()
+	if (!buffer.isOversize()) return notifications
+
+	const json = JSON.stringify(notifications, null, 2)
+	const hash = createHash('sha256').update(json).digest('hex').slice(0, 16)
+	const filePath = path.join(tmpdir(), `mcpx-notifications-${hash}.json`)
+	// Stable filenames make repeated oversize notification payloads dedupe naturally.
+	await fs.writeFile(filePath, `${json}\n`, 'utf8')
+	return [{ method: '$oversize', params: { savedTo: filePath } }]
+}
+
 function isProgressNotification(
 	notification: McpNotification,
 ): notification is Extract<
@@ -82,3 +96,7 @@ function isProgressNotification(
 		typeof notification.params === 'object'
 	)
 }
+import { createHash } from 'node:crypto'
+import fs from 'node:fs/promises'
+import { tmpdir } from 'node:os'
+import path from 'node:path'

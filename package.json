@@ -1,6 +1,6 @@
 {
 	"name": "mcpx",
-	"version": "0.9.15",
+	"version": "0.10.0",
 	"license": "MIT",
 	"bin": {
 		"mcpx": "./src/main.ts"
@@ -10,6 +10,8 @@
 		"build": "./scripts/build.sh",
 		"check": "bun run typecheck && bun test && bunx oxfmt --check package.json tsconfig.json README.md .gitignore .oxfmtrc.json src tests skills docs",
 		"format": "bunx oxfmt package.json tsconfig.json README.md .gitignore .oxfmtrc.json src tests skills docs",
+		"prototype:cancellation": "bun prototypes/mcp-cancellation/run.ts",
+		"prototype:cancellation:evidence": "bun prototypes/mcp-cancellation/run.ts --evidence",
 		"typecheck": "tsgo --project tsconfig.json --noEmit",
 		"test": "bun test"
 	},

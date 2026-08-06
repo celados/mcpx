@@ -1,4 +1,13 @@
+---
+type: Specification
+title: mcpxd V2 BDD Spec - HTTP routing and first-class notifications
+status: superseded
+superseded_by: docs/specs/mcp-runtime-upgrade.md
+---
+
 # mcpxd V2 BDD Spec - HTTP routing and first-class notifications
+
+> Superseded for architecture and ownership. Retained only as historical regression evidence.
 
 V2 extends V1 in three orthogonal directions:
 

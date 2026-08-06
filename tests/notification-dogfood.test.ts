@@ -193,6 +193,23 @@ describe('notification fixture dogfood', () => {
 				hasRetainedSessionId: false,
 			}),
 		)
+
+		const removed = JSON.parse(
+			(await runMcpx(['@remove', '--name', 'notification-fixture', '--raw']))
+				.stdout,
+		)
+		expect(removed).toEqual({
+			name: 'notification-fixture',
+			removed: true,
+			tokenRemoved: false,
+		})
+		const registry = JSON.parse(
+			await fs.readFile(
+				path.join(home, '.agents', 'mcpx', 'state-v2', 'registry.json'),
+				'utf8',
+			),
+		)
+		expect(registry.servers).toEqual({})
 	})
 })
 
@@ -254,7 +271,7 @@ async function runMcpx(
 
 async function readRegisteredServerDiscoveredAt(): Promise<string | undefined> {
 	const raw = await fs.readFile(
-		path.join(home, '.agents', 'mcpx', 'servers.json'),
+		path.join(home, '.agents', 'mcpx', 'state-v2', 'schema-cache.json'),
 		'utf8',
 	)
 	return JSON.parse(raw).servers['notification-fixture'].discoveredAt

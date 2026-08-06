@@ -1,6 +1,6 @@
 import { cancel, isCancel, multiselect } from '@clack/prompts'
 
-import type { ProjectService } from './project-service'
+import type { RegistryConfig } from './types'
 
 import {
 	buildMcpxSkillMarkdown,
@@ -13,12 +13,14 @@ export type SkillCommandInput = {
 	show?: string
 }
 
+export type RegistryView = Pick<RegistryConfig, 'servers'>
+
 export async function runSkillCommand(
-	service: ProjectService,
+	registry: RegistryView,
 	cwd: string,
 	input: SkillCommandInput,
 ): Promise<void> {
-	const availableServers = Object.keys(service.config.servers).sort()
+	const availableServers = Object.keys(registry.servers).sort()
 	if (availableServers.length === 0) {
 		throw new Error(
 			'No MCP servers are registered. Run "mcpx @add --name <name> --url <url>" first.',

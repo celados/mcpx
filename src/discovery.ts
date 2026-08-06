@@ -11,7 +11,6 @@ import { authFromBearerValues, describeBearerAuth } from './bearer'
 import { resolveProbeHeaders } from './headers'
 import { listMcpTools } from './mcp-client'
 import { assignCommandNames } from './names'
-import { authenticateOAuthServer } from './oauth'
 
 export type DiscoverServerOptions = {
 	name: string
@@ -21,7 +20,6 @@ export type DiscoverServerOptions = {
 			url: string
 			bearer?: string | string[]
 			headers?: Record<string, string>
-			interactiveAuth?: boolean
 	  }
 	| {
 			transport: 'stdio'
@@ -47,26 +45,9 @@ export async function discoverServer(
 
 	const discoveredAuth =
 		configuredAuth ?? (await discoverAuth(url, resolveProbeHeaders(seedServer)))
-	let auth = discoveredAuth
-	try {
-		if (options.interactiveAuth !== false && discoveredAuth.kind === 'oauth') {
-			auth = await authenticateOAuthServer(options.name, url, discoveredAuth)
-		}
-	} catch (error) {
-		const message = error instanceof Error ? error.message : String(error)
-		return {
-			server: {
-				...seedServer,
-				auth: discoveredAuth,
-				discoveredAt: new Date().toISOString(),
-			},
-			status: 'auth-required',
-			message,
-		}
-	}
 	const server: ServerConfig = {
 		...seedServer,
-		auth,
+		auth: discoveredAuth,
 		discoveredAt: new Date().toISOString(),
 	}
 
@@ -80,7 +61,7 @@ export async function discoverServer(
 		}
 	} catch (error) {
 		const message = error instanceof Error ? error.message : String(error)
-		if (auth.kind === 'oauth' || auth.kind === 'unknown') {
+		if (discoveredAuth.kind === 'oauth' || discoveredAuth.kind === 'unknown') {
 			return {
 				server,
 				status: 'auth-required',
@@ -117,46 +98,6 @@ async function discoverStdioServer(
 	} catch (error) {
 		const message = error instanceof Error ? error.message : String(error)
 		return { server, status: 'unreachable', message }
-	}
-}
-
-export async function refreshServer(
-	server: ServerConfig,
-	name = 'stdio',
-): Promise<ServerConfig> {
-	const tools = await listMcpTools(server, name)
-	return {
-		...server,
-		discoveredAt: new Date().toISOString(),
-		tools: normalizeTools(tools),
-	}
-}
-
-export async function reauthenticateServer(
-	name: string,
-	server: ServerConfig,
-): Promise<ServerConfig> {
-	if (server.transport === 'stdio') {
-		throw new Error(
-			`Server "${name}" uses stdio and does not support OAuth re-authentication.`,
-		)
-	}
-
-	const url = new URL(server.url)
-	const discoveredAuth = await discoverAuth(
-		url,
-		resolveProbeHeaders({ ...server, auth: { kind: 'none' } }),
-	)
-	if (discoveredAuth.kind !== 'oauth') {
-		throw new Error(
-			`Server "${name}" did not advertise OAuth authentication metadata.`,
-		)
-	}
-
-	const auth = await authenticateOAuthServer(name, url, discoveredAuth)
-	return {
-		...server,
-		auth,
 	}
 }
 

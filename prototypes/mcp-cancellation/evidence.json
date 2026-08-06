@@ -1,0 +1,482 @@
+{
+	"question": "Can one caller-owned AbortSignal promptly cancel Client.callTool while preserving stdio and Streamable HTTP connection reuse?",
+	"runtime": {
+		"bun": "1.3.14",
+		"sdk": "1.29.0",
+		"sdkLock": "@modelcontextprotocol/sdk@1.29.0"
+	},
+	"abortReason": "originating CLI socket closed",
+	"transports": [
+		{
+			"transport": "stdio",
+			"scenarios": [
+				{
+					"scenario": "acknowledge",
+					"settlement": {
+						"status": "rejected",
+						"elapsedMs": 16,
+						"error": {
+							"name": "McpError",
+							"code": -32001,
+							"message": "MCP error -32001: Error: originating CLI socket closed"
+						}
+					},
+					"reuseBeforeLate": "echo-ok",
+					"reuseAfterLate": "echo-ok",
+					"fixtureEvents": [
+						{
+							"event": "message",
+							"method": "initialize",
+							"id": 0
+						},
+						{
+							"event": "message",
+							"method": "notifications/initialized"
+						},
+						{
+							"event": "message",
+							"method": "tools/call",
+							"id": 1
+						},
+						{
+							"event": "call",
+							"id": 1,
+							"scenario": "acknowledge"
+						},
+						{
+							"event": "message",
+							"method": "notifications/cancelled"
+						},
+						{
+							"event": "cancel",
+							"requestId": 1,
+							"reason": "Error: originating CLI socket closed",
+							"scenario": "acknowledge",
+							"pending": true
+						},
+						{
+							"event": "work-stopped",
+							"requestId": 1,
+							"scenario": "acknowledge"
+						},
+						{
+							"event": "message",
+							"method": "tools/call",
+							"id": 2
+						},
+						{
+							"event": "message",
+							"method": "tools/call",
+							"id": 3
+						}
+					],
+					"clientErrors": []
+				},
+				{
+					"scenario": "ignore",
+					"settlement": {
+						"status": "rejected",
+						"elapsedMs": 15,
+						"error": {
+							"name": "McpError",
+							"code": -32001,
+							"message": "MCP error -32001: Error: originating CLI socket closed"
+						}
+					},
+					"reuseBeforeLate": "echo-ok",
+					"reuseAfterLate": "echo-ok",
+					"fixtureEvents": [
+						{
+							"event": "message",
+							"method": "tools/call",
+							"id": 4
+						},
+						{
+							"event": "call",
+							"id": 4,
+							"scenario": "ignore"
+						},
+						{
+							"event": "message",
+							"method": "notifications/cancelled"
+						},
+						{
+							"event": "cancel",
+							"requestId": 4,
+							"reason": "Error: originating CLI socket closed",
+							"scenario": "ignore",
+							"pending": true
+						},
+						{
+							"event": "message",
+							"method": "tools/call",
+							"id": 5
+						},
+						{
+							"event": "response",
+							"id": 4,
+							"scenario": "ignore"
+						},
+						{
+							"event": "message",
+							"method": "tools/call",
+							"id": 6
+						}
+					],
+					"clientErrors": [
+						"Received a response for an unknown message ID: {\"jsonrpc\":\"2.0\",\"id\":4,\"result\":{\"content\":[{\"type\":\"text\",\"text\":\"ignore\"}]}}"
+					]
+				},
+				{
+					"scenario": "race",
+					"settlement": {
+						"status": "rejected",
+						"elapsedMs": 15,
+						"error": {
+							"name": "McpError",
+							"code": -32001,
+							"message": "MCP error -32001: Error: originating CLI socket closed"
+						}
+					},
+					"reuseBeforeLate": "echo-ok",
+					"reuseAfterLate": "echo-ok",
+					"fixtureEvents": [
+						{
+							"event": "message",
+							"method": "tools/call",
+							"id": 7
+						},
+						{
+							"event": "call",
+							"id": 7,
+							"scenario": "race"
+						},
+						{
+							"event": "message",
+							"method": "notifications/cancelled"
+						},
+						{
+							"event": "cancel",
+							"requestId": 7,
+							"reason": "Error: originating CLI socket closed",
+							"scenario": "race",
+							"pending": true
+						},
+						{
+							"event": "message",
+							"method": "tools/call",
+							"id": 8
+						},
+						{
+							"event": "response",
+							"id": 7,
+							"scenario": "race"
+						},
+						{
+							"event": "message",
+							"method": "tools/call",
+							"id": 9
+						}
+					],
+					"clientErrors": [
+						"Received a response for an unknown message ID: {\"jsonrpc\":\"2.0\",\"id\":7,\"result\":{\"content\":[{\"type\":\"text\",\"text\":\"race\"}]}}"
+					]
+				},
+				{
+					"scenario": "complete-before-cancel",
+					"settlement": {
+						"status": "fulfilled",
+						"elapsedMs": 6,
+						"text": "complete-before-cancel"
+					},
+					"reuseBeforeLate": "echo-ok",
+					"reuseAfterLate": "echo-ok",
+					"fixtureEvents": [
+						{
+							"event": "message",
+							"method": "tools/call",
+							"id": 10
+						},
+						{
+							"event": "call",
+							"id": 10,
+							"scenario": "complete-before-cancel"
+						},
+						{
+							"event": "response",
+							"id": 10,
+							"scenario": "complete-before-cancel"
+						},
+						{
+							"event": "message",
+							"method": "notifications/cancelled"
+						},
+						{
+							"event": "cancel",
+							"requestId": 10,
+							"reason": "Error: originating CLI socket closed",
+							"scenario": "complete-before-cancel",
+							"pending": false
+						},
+						{
+							"event": "message",
+							"method": "tools/call",
+							"id": 11
+						},
+						{
+							"event": "message",
+							"method": "tools/call",
+							"id": 12
+						}
+					],
+					"clientErrors": []
+				}
+			]
+		},
+		{
+			"transport": "streamable-http",
+			"sessionIds": [
+				null,
+				"local-session",
+				"local-session",
+				"local-session",
+				"local-session",
+				"local-session",
+				"local-session",
+				"local-session",
+				"local-session",
+				"local-session",
+				"local-session",
+				"local-session",
+				"local-session",
+				"local-session",
+				"local-session",
+				"local-session",
+				"local-session",
+				"local-session"
+			],
+			"scenarios": [
+				{
+					"scenario": "acknowledge",
+					"settlement": {
+						"status": "rejected",
+						"elapsedMs": 16,
+						"error": {
+							"name": "McpError",
+							"code": -32001,
+							"message": "MCP error -32001: Error: originating CLI socket closed"
+						}
+					},
+					"reuseBeforeLate": "echo-ok",
+					"reuseAfterLate": "echo-ok",
+					"fixtureEvents": [
+						{
+							"event": "message",
+							"method": "tools/call",
+							"id": 1
+						},
+						{
+							"event": "call",
+							"id": 1,
+							"scenario": "acknowledge",
+							"sessionId": "local-session"
+						},
+						{
+							"event": "message",
+							"method": "notifications/cancelled"
+						},
+						{
+							"event": "cancel",
+							"requestId": 1,
+							"reason": "Error: originating CLI socket closed",
+							"scenario": "acknowledge",
+							"pending": true,
+							"originalRequestAborted": false
+						},
+						{
+							"event": "work-stopped",
+							"requestId": 1,
+							"scenario": "acknowledge"
+						},
+						{
+							"event": "message",
+							"method": "tools/call",
+							"id": 2
+						},
+						{
+							"event": "message",
+							"method": "tools/call",
+							"id": 3
+						}
+					],
+					"clientErrors": []
+				},
+				{
+					"scenario": "ignore",
+					"settlement": {
+						"status": "rejected",
+						"elapsedMs": 16,
+						"error": {
+							"name": "McpError",
+							"code": -32001,
+							"message": "MCP error -32001: Error: originating CLI socket closed"
+						}
+					},
+					"reuseBeforeLate": "echo-ok",
+					"reuseAfterLate": "echo-ok",
+					"fixtureEvents": [
+						{
+							"event": "message",
+							"method": "tools/call",
+							"id": 4
+						},
+						{
+							"event": "call",
+							"id": 4,
+							"scenario": "ignore",
+							"sessionId": "local-session"
+						},
+						{
+							"event": "message",
+							"method": "notifications/cancelled"
+						},
+						{
+							"event": "cancel",
+							"requestId": 4,
+							"reason": "Error: originating CLI socket closed",
+							"scenario": "ignore",
+							"pending": true,
+							"originalRequestAborted": false
+						},
+						{
+							"event": "message",
+							"method": "tools/call",
+							"id": 5
+						},
+						{
+							"event": "response",
+							"id": 4,
+							"scenario": "ignore"
+						},
+						{
+							"event": "message",
+							"method": "tools/call",
+							"id": 6
+						}
+					],
+					"clientErrors": [
+						"Received a response for an unknown message ID: {\"jsonrpc\":\"2.0\",\"id\":4,\"result\":{\"content\":[{\"type\":\"text\",\"text\":\"ignore\"}]}}"
+					]
+				},
+				{
+					"scenario": "race",
+					"settlement": {
+						"status": "rejected",
+						"elapsedMs": 16,
+						"error": {
+							"name": "McpError",
+							"code": -32001,
+							"message": "MCP error -32001: Error: originating CLI socket closed"
+						}
+					},
+					"reuseBeforeLate": "echo-ok",
+					"reuseAfterLate": "echo-ok",
+					"fixtureEvents": [
+						{
+							"event": "message",
+							"method": "tools/call",
+							"id": 7
+						},
+						{
+							"event": "call",
+							"id": 7,
+							"scenario": "race",
+							"sessionId": "local-session"
+						},
+						{
+							"event": "message",
+							"method": "notifications/cancelled"
+						},
+						{
+							"event": "cancel",
+							"requestId": 7,
+							"reason": "Error: originating CLI socket closed",
+							"scenario": "race",
+							"pending": true,
+							"originalRequestAborted": false
+						},
+						{
+							"event": "response",
+							"id": 7,
+							"scenario": "race"
+						},
+						{
+							"event": "message",
+							"method": "tools/call",
+							"id": 8
+						},
+						{
+							"event": "message",
+							"method": "tools/call",
+							"id": 9
+						}
+					],
+					"clientErrors": [
+						"Received a response for an unknown message ID: {\"jsonrpc\":\"2.0\",\"id\":7,\"result\":{\"content\":[{\"type\":\"text\",\"text\":\"race\"}]}}"
+					]
+				},
+				{
+					"scenario": "complete-before-cancel",
+					"settlement": {
+						"status": "fulfilled",
+						"elapsedMs": 6,
+						"text": "complete-before-cancel"
+					},
+					"reuseBeforeLate": "echo-ok",
+					"reuseAfterLate": "echo-ok",
+					"fixtureEvents": [
+						{
+							"event": "message",
+							"method": "tools/call",
+							"id": 10
+						},
+						{
+							"event": "call",
+							"id": 10,
+							"scenario": "complete-before-cancel",
+							"sessionId": "local-session"
+						},
+						{
+							"event": "response",
+							"id": 10,
+							"scenario": "complete-before-cancel"
+						},
+						{
+							"event": "message",
+							"method": "notifications/cancelled"
+						},
+						{
+							"event": "cancel",
+							"requestId": 10,
+							"reason": "Error: originating CLI socket closed",
+							"scenario": "complete-before-cancel",
+							"pending": false,
+							"originalRequestAborted": false
+						},
+						{
+							"event": "message",
+							"method": "tools/call",
+							"id": 11
+						},
+						{
+							"event": "message",
+							"method": "tools/call",
+							"id": 12
+						}
+					],
+					"clientErrors": []
+				}
+			]
+		}
+	]
+}
