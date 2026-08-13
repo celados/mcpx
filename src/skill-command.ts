@@ -46,8 +46,12 @@ export async function runSkillCommand(
 				)
 			: normalizeSelectedServers(input.servers, availableServers)
 
-	const filePath = await writeMcpxSkill({ cwd, servers: selectedServers })
-	console.log(`Wrote ${filePath}`)
+	const skillDir = await writeMcpxSkill({
+		cwd,
+		servers: selectedServers,
+		declarations: registry.servers,
+	})
+	process.stdout.write(`Wrote ${skillDir}\n`)
 }
 
 async function promptForServers(

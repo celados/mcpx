@@ -168,11 +168,14 @@ This writes:
 
 ```text
 .agents/skills/mcpx/SKILL.md
+.agents/skills/mcpx/references/install.md
+.agents/skills/mcpx/references/servers.md
 ```
 
-Use the generated project skill as the project-specific router. It should name
-servers the user has already made available; do not use this flow to register or
-authenticate new MCP servers.
+Use the generated project skill as the project-specific router. It names the
+approved servers and includes troubleshooting references so a collaborator's
+agent can install `mcpx` and reconstruct those servers if their machine is
+uninitialized. Do not use `@skill` itself as a substitute for `@add`.
 
 For temporary agent guidance without writing `.agents/skills`, print a
 single-server skill to stdout:
