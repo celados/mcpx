@@ -2,17 +2,38 @@ import { YAML } from 'bun'
 import fs from 'node:fs/promises'
 import path from 'node:path'
 
+export type SkillServerDeclaration = {
+	transport?: 'http' | 'stdio'
+	url?: string
+	command?: string
+	args?: string[]
+	auth?: {
+		kind: string
+		credentials?: Array<{
+			kind: string
+			name?: string
+			value?: string
+			key?: string
+		}>
+	}
+}
+
 export type SkillTemplateInput = {
 	cwd: string
 	servers: string[]
+	declarations?: Record<string, SkillServerDeclaration>
 }
 
 type SkillMarkdownOptions = {
 	projectLocal?: boolean
 }
 
+export function mcpxSkillDir(cwd: string): string {
+	return path.join(cwd, '.agents', 'skills', 'mcpx')
+}
+
 export function mcpxSkillPath(cwd: string): string {
-	return path.join(cwd, '.agents', 'skills', 'mcpx', 'SKILL.md')
+	return path.join(mcpxSkillDir(cwd), 'SKILL.md')
 }
 
 export function buildSchemaSelector(servers: string[]): string {
@@ -36,6 +57,7 @@ export function buildMcpxSkillMarkdown(
 		? `Use project-approved MCP tools through mcpx. Trigger when the user asks to inspect or operate services backed by these MCP servers: ${servers.join(', ')}.`
 		: `Use configured MCP tools through mcpx. Trigger when the user asks to inspect or operate services backed by these MCP servers: ${servers.join(', ')}.`
 	const scope = projectLocal ? 'project-approved' : 'configured'
+	const troubleshooting = projectLocal ? projectTroubleshootingSection() : ''
 
 	return `---
 name: ${JSON.stringify('mcpx')}
@@ -134,16 +156,164 @@ server events. Parse only when \`$notifications\`, the sentinel line, or the raw
 envelope is present.
 
 Do not hand-edit MCP configuration in this project. Servers are registered in the user's global mcpx registry.
+${troubleshooting}`
+}
+
+export function buildInstallReferenceMarkdown(): string {
+	return `# Install mcpx
+
+Read this when \`mcpx\` is missing: \`command not found\`, not on \`PATH\`, or
+\`mcpx --version\` fails.
+
+## Prerequisites
+
+The released \`mcpx\` binary is a Bun executable. If \`bun\` is missing:
+
+\`\`\`bash
+curl -fsSL https://bun.sh/install | bash
+\`\`\`
+
+## Install
+
+Install the latest mcpx release:
+
+\`\`\`bash
+curl -fsSL https://raw.githubusercontent.com/celados/mcpx/main/install.sh | bash
+\`\`\`
+
+The installer writes \`~/.local/bin/mcpx\`. If that directory is not on \`PATH\`,
+add it for the current session and retry:
+
+\`\`\`bash
+export PATH="$HOME/.local/bin:$PATH"
+\`\`\`
+
+## Verify
+
+\`\`\`bash
+command -v mcpx
+mcpx --version
+\`\`\`
+
+Once \`mcpx\` runs, return to the skill. If a listed server is still missing,
+read [servers.md](servers.md).
+`
+}
+
+export function buildAddCommand(
+	name: string,
+	declaration: SkillServerDeclaration,
+): string | undefined {
+	if (declaration.transport === 'stdio') {
+		if (!declaration.command) return undefined
+		const parts = [
+			'mcpx',
+			'@add',
+			'--name',
+			shellQuote(name),
+			'--transport',
+			'stdio',
+			'--command',
+			shellQuote(declaration.command),
+		]
+		for (const arg of declaration.args ?? []) {
+			parts.push('--args', shellQuote(arg))
+		}
+		return parts.join(' ')
+	}
+
+	if (!declaration.url) return undefined
+	const parts = [
+		'mcpx',
+		'@add',
+		'--name',
+		shellQuote(name),
+		'--url',
+		shellQuote(declaration.url),
+	]
+	// Only env:NAME is safe to commit. Literal/stored bearer values stay in the
+	// credential store and are surfaced as a "ask the user" note instead.
+	for (const envName of bearerEnvNames(declaration)) {
+		parts.push('--bearer', `env:${envName}`)
+	}
+	return parts.join(' ')
+}
+
+export function buildServersReferenceMarkdown(
+	servers: string[],
+	declarations: Record<string, SkillServerDeclaration> = {},
+): string {
+	const sections = servers.map((name) =>
+		renderServerSection(name, declarations[name]),
+	)
+
+	// Collaborators only see server names in SKILL.md. The declared (secret-free)
+	// @add recipe has to travel with the skill or they cannot reconstruct setup.
+	return `# Project MCP servers
+
+Read this when a listed server is missing from \`mcpx\`, an unknown-server
+error appears, or a call returns \`reauth-required\` /
+\`Credentials for <server> must be refreshed\`.
+
+Project-approved servers live in the user's global mcpx registry, not in this
+repository. Reconstruct a missing server with \`mcpx @add\` using the recipe
+below.
+
+## Diagnose
+
+\`\`\`bash
+mcpx
+\`\`\`
+
+If that command is missing, read [install.md](install.md) first. Then compare
+the listing to the project-approved servers named in \`SKILL.md\`.
+
+## Register missing servers
+
+Run only the \`@add\` command for a server that is absent.
+
+${sections.join('\n')}
+## Authenticate
+
+An ordinary \`mcpx <server> <tool>\` call never starts login. If credentials
+are missing or expired:
+
+\`\`\`bash
+mcpx @refresh
+\`\`\`
+
+\`@refresh\` may open a browser or prompt for an OAuth client. If the current
+session is not a TTY, ask the user to run it in their terminal.
+
+Once \`mcpx\` lists the server and a focused \`--schema\` call succeeds, return
+to the skill.
 `
 }
 
 export async function writeMcpxSkill(
 	input: SkillTemplateInput,
 ): Promise<string> {
-	const filePath = mcpxSkillPath(input.cwd)
-	await fs.mkdir(path.dirname(filePath), { recursive: true })
-	await fs.writeFile(filePath, buildMcpxSkillMarkdown(input.servers), 'utf8')
-	return filePath
+	const skillDir = mcpxSkillDir(input.cwd)
+	const referencesDir = path.join(skillDir, 'references')
+	await fs.mkdir(referencesDir, { recursive: true })
+	await Promise.all([
+		fs.writeFile(
+			path.join(skillDir, 'SKILL.md'),
+			buildMcpxSkillMarkdown(input.servers),
+			'utf8',
+		),
+		fs.writeFile(
+			path.join(referencesDir, 'install.md'),
+			buildInstallReferenceMarkdown(),
+			'utf8',
+		),
+		fs.writeFile(
+			path.join(referencesDir, 'servers.md'),
+			buildServersReferenceMarkdown(input.servers, input.declarations ?? {}),
+			'utf8',
+		),
+	])
+	return skillDir
 }
 
 export async function readMcpxSkillServers(cwd: string): Promise<string[]> {
@@ -170,6 +340,94 @@ export function parseMcpxSkillServers(content: string): string[] {
 	} catch {
 		return []
 	}
+}
+
+function projectTroubleshootingSection(): string {
+	return `
+## Troubleshooting
+
+Stay on Discover/Call unless one of these symptoms appears:
+
+- \`mcpx\` is missing (\`command not found\`, not on \`PATH\`, or \`mcpx --version\` fails) → [references/install.md](references/install.md)
+- A listed server is missing from \`mcpx\`, or a call returns \`reauth-required\` / \`Credentials for … must be refreshed\` → [references/servers.md](references/servers.md)
+`
+}
+
+function renderServerSection(
+	name: string,
+	declaration: SkillServerDeclaration | undefined,
+): string {
+	const command = declaration ? buildAddCommand(name, declaration) : undefined
+	const notes = declaration ? serverNotes(declaration) : []
+	const body = command
+		? ['```bash', command, '```', ...notes.map((note) => `\n${note}`)].join(
+				'\n',
+			)
+		: 'No stored `@add` recipe. Ask the user for the MCP URL or stdio command, then register it with `mcpx @add`.'
+
+	return `### ${name}
+
+${body}
+`
+}
+
+function serverNotes(declaration: SkillServerDeclaration): string[] {
+	if (declaration.transport === 'stdio') {
+		if (!hasLocalPath(declaration)) return []
+		return [
+			'Stdio `command`/`args` may contain machine-local paths. If a path does not exist here, ask the user for the equivalent path on this machine.',
+		]
+	}
+
+	const notes: string[] = []
+	const envNames = bearerEnvNames(declaration)
+	if (envNames.length > 0) {
+		const listed = envNames.map((name) => `\`${name}\``).join(', ')
+		notes.push(
+			`This server reads ${listed} from the environment. If unset, ask the user to export ${envNames.length === 1 ? 'it' : 'them'} before retrying. Do not invent credentials.`,
+		)
+	}
+	if (hasSecretBearer(declaration)) {
+		notes.push(
+			'This server requires a bearer token that was not stored as an environment reference. Ask the user for the token and pass it as `--bearer env:NAME` or `--bearer <token>`.',
+		)
+	}
+	return notes
+}
+
+function bearerEnvNames(declaration: SkillServerDeclaration): string[] {
+	const names: string[] = []
+	for (const credential of declaration.auth?.credentials ?? []) {
+		if (credential.kind === 'env' && credential.name) {
+			names.push(credential.name)
+		}
+	}
+	return names
+}
+
+function hasSecretBearer(declaration: SkillServerDeclaration): boolean {
+	return (declaration.auth?.credentials ?? []).some(
+		(credential) =>
+			credential.kind === 'literal' || credential.kind === 'stored',
+	)
+}
+
+function hasLocalPath(declaration: SkillServerDeclaration): boolean {
+	const values = [declaration.command, ...(declaration.args ?? [])].filter(
+		(value): value is string => typeof value === 'string',
+	)
+	return values.some(
+		(value) =>
+			value.startsWith('/') ||
+			value.startsWith('~/') ||
+			value === '~' ||
+			/^[A-Za-z]:[\\/]/.test(value),
+	)
+}
+
+function shellQuote(value: string): string {
+	if (value.length > 0 && /^[A-Za-z0-9_./:@%+=,-]+$/.test(value)) return value
+	return `'${value.replaceAll("'", "'\\''")}'`
 }
 
 function extractFrontmatter(content: string): string | undefined {

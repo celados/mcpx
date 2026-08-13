@@ -247,10 +247,14 @@ This writes:
 
 ```text
 .agents/skills/mcpx/SKILL.md
+.agents/skills/mcpx/references/install.md
+.agents/skills/mcpx/references/servers.md
 ```
 
 The generated skill instructs agents to discover tools with focused schema
-selectors and call MCP tools through mcpx.
+selectors and call MCP tools through mcpx. A Troubleshooting section at the
+bottom points collaborators at install and server-setup references so their
+agent can recover when `mcpx` is missing or a listed server is not registered.
 
 For temporary agent guidance without writing `.agents/skills`, print a one-server
 skill to stdout:

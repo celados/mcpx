@@ -13,6 +13,17 @@ function fixtureService(): RegistryView {
 			slack: {
 				transport: 'stdio',
 				command: 'slack-mcp',
+				env: { SLACK_BOT_TOKEN: 'xoxb-secret' },
+				tools: [],
+			},
+			posthog: {
+				url: 'https://mcp.posthog.com/mcp',
+				auth: {
+					kind: 'bearer',
+					credentials: [{ kind: 'env', name: 'POSTHOG_TOKEN' }],
+					strategy: 'round-robin',
+					confidence: 'configured',
+				},
 				tools: [],
 			},
 		},
@@ -48,6 +59,29 @@ describe('mcpx skill command', () => {
 		await expect(
 			readFile(join(cwd, '.agents', 'skills', 'mcpx', 'SKILL.md'), 'utf8'),
 		).rejects.toThrow()
+	})
+
+	it('writes project skill references from registry declarations', async () => {
+		const cwd = await mkdtemp(join(tmpdir(), 'mcpx-skill-write-'))
+		const output = await captureStdout(async () => {
+			await runSkillCommand(fixtureService(), cwd, { servers: 'posthog,slack' })
+		})
+
+		const skillDir = join(cwd, '.agents', 'skills', 'mcpx')
+		expect(output).toContain(`Wrote ${skillDir}`)
+		const skill = await readFile(join(skillDir, 'SKILL.md'), 'utf8')
+		const servers = await readFile(
+			join(skillDir, 'references', 'servers.md'),
+			'utf8',
+		)
+		expect(skill).toContain('## Troubleshooting')
+		expect(servers).toContain(
+			'mcpx @add --name posthog --url https://mcp.posthog.com/mcp --bearer env:POSTHOG_TOKEN',
+		)
+		expect(servers).toContain(
+			'mcpx @add --name slack --transport stdio --command slack-mcp',
+		)
+		expect(servers).not.toContain('xoxb-secret')
 	})
 
 	it('rejects mixing temporary show and project skill generation', async () => {
