@@ -8,13 +8,13 @@ schemas, handles OAuth where possible, and exposes each MCP server as a root
 command:
 
 ```bash
-mcpx posthog projects-get
-mcpx sentry search-issues --input '{"query":"is:unresolved"}'
+mcpx posthog.projects-get
+mcpx sentry.search-issues '{"query":"is:unresolved"}'
 ```
 
 mcpx is designed for agents. The command surface is intentionally schema-first,
-stable, and explicit: tool calls pass input through `--input`, while mcpx's own
-control commands live under the `@` namespace.
+stable, and explicit: commands use dotted paths and receive one structured input
+token, while mcpx's own control commands live under the `@` namespace.
 
 ## Requirements
 
@@ -39,12 +39,12 @@ Set `MCPX_INSTALL_DIR` to choose another install directory.
 Register MCP servers globally:
 
 ```bash
-mcpx @add --name posthog --url https://mcp.posthog.com/mcp
-mcpx @add --name sentry --url https://mcp.sentry.dev/mcp
-mcpx @add --name cf-docs --url https://docs.mcp.cloudflare.com/mcp
-mcpx @add --name cf-bindings --url https://bindings.mcp.cloudflare.com/mcp
-mcpx @add --name cf-observability --url https://observability.mcp.cloudflare.com/mcp
-mcpx @add --name browser --url http://127.0.0.1:9000/mcp
+mcpx @add "{ name: 'posthog', url: 'https://mcp.posthog.com/mcp' }"
+mcpx @add "{ name: 'sentry', url: 'https://mcp.sentry.dev/mcp' }"
+mcpx @add "{ name: 'cf-docs', url: 'https://docs.mcp.cloudflare.com/mcp' }"
+mcpx @add "{ name: 'cf-bindings', url: 'https://bindings.mcp.cloudflare.com/mcp' }"
+mcpx @add "{ name: 'cf-observability', url: 'https://observability.mcp.cloudflare.com/mcp' }"
+mcpx @add "{ name: 'browser', url: 'http://127.0.0.1:9000/mcp' }"
 ```
 
 > [browser-os](https://www.browseros.com/) is an agent-native browser built on
@@ -71,20 +71,20 @@ global servers are relevant by using schema selectors or a generated skill.
 Call tools through the server command:
 
 ```bash
-mcpx <server> <tool> --input '<json-or-json5>'
+mcpx <server>.<tool> '<json-or-json5>'
 ```
 
 Examples:
 
 ```bash
-mcpx posthog projects-get --input '{}'
-mcpx sentry whoami --input '{}'
+mcpx posthog.projects-get '{}'
+mcpx sentry.whoami '{}'
 ```
 
-For complex payloads, use `@-` with a heredoc to keep the input readable:
+For complex payloads, use stdin to keep the input readable:
 
 ```bash
-mcpx cf-graphql graphql_query --input @- <<'JSON'
+mcpx cf-graphql.graphql_query - <<'JSON'
 {
   "query": "query GetWorkerAnalytics($accountTag: String!, $scriptName: String!, $since: Time!, $until: Time!) { viewer { accounts(filter: {accountTag: $accountTag}) { workersInvocationsAdaptive(limit: 1000, filter: {scriptName: $scriptName, datetime_geq: $since, datetime_leq: $until}, orderBy: [datetimeHour_ASC]) { dimensions { datetimeHour scriptName status } sum { requests subrequests errors duration } quantiles { cpuTimeP50 cpuTimeP99 } } } } }",
   "operationName": "GetWorkerAnalytics",
@@ -98,33 +98,33 @@ mcpx cf-graphql graphql_query --input @- <<'JSON'
 JSON
 ```
 
-`--input` is the primary input path. It accepts inline JSON/JSON5, `@file`, and
-`@-` stdin inputs.
+The command accepts exactly one input object. Pass it inline, as `@file`, or
+through `-` stdin.
 
 ## Discover Schemas
 
 Print the command schema for agents:
 
 ```bash
-mcpx --schema
+mcpx @schema
 ```
 
 Focus on one server:
 
 ```bash
-mcpx --schema=.posthog
+mcpx @schema .posthog
 ```
 
 Focus on a set of servers:
 
 ```bash
-mcpx --schema='.{posthog,sentry}'
+mcpx @schema '.{posthog,sentry}'
 ```
 
 Focus on an internal mcpx command:
 
 ```bash
-mcpx --schema='.["@add"]'
+mcpx @schema '.["@add"]'
 ```
 
 mcpx caches discovered tool schemas in the global registry. Cached schemas older
@@ -138,36 +138,33 @@ mcpx control commands use the `@` namespace so they do not collide with server
 names:
 
 ```bash
-mcpx @add --name <server> --url <mcp-url>
-mcpx @add --name <server> --url <mcp-url> --bearer env:<TOKEN_ENV>
-mcpx @add --name <server> --transport stdio --command <command> --args <arg>
-mcpx @remove --name <server>
+mcpx @add "{ name: '<server>', url: '<mcp-url>' }"
+mcpx @add "{ name: '<server>', url: '<mcp-url>', bearer: 'env:<TOKEN_ENV>' }"
+mcpx @add "{ name: '<server>', transport: 'stdio', command: '<command>', args: ['<arg>'] }"
+mcpx @remove "{ name: '<server>' }"
 mcpx @refresh
-mcpx @daemon status
-mcpx @daemon stop
-mcpx @daemon server
+mcpx @daemon.status
+mcpx @daemon.stop
+mcpx @daemon.server
 mcpx @skill
 ```
 
 Server names cannot start with `@`.
 
-HTTP is the default transport. Pass bearer credentials with repeatable
-`--bearer` values. `env:NAME` reads a token from an environment variable at
-runtime; literal values are accepted but are stored in the registry:
+HTTP is the default transport. Pass bearer credentials as a string or array.
+`env:NAME` reads a token from an environment variable at runtime; literal values
+are accepted but are stored in the registry:
 
 ```bash
-mcpx @add --name posthog --url https://mcp.posthog.com/mcp --bearer env:POSTHOG_TOKEN
-mcpx @add --name posthog --url https://mcp.posthog.com/mcp \
-  --bearer env:POSTHOG_TOKEN_A \
-  --bearer env:POSTHOG_TOKEN_B
+mcpx @add "{ name: 'posthog', url: 'https://mcp.posthog.com/mcp', bearer: 'env:POSTHOG_TOKEN' }"
+mcpx @add "{ name: 'posthog', url: 'https://mcp.posthog.com/mcp', bearer: ['env:POSTHOG_TOKEN_A', 'env:POSTHOG_TOKEN_B'] }"
 ```
 
 Multiple bearer credentials use round-robin selection by default. Stdio servers
-are local process registrations; pass each process argument with `--args`, or use
-`--input` when you need structured `args` / `env`:
+are local process registrations with structured `args` and `env`:
 
 ```bash
-mcpx @add --input '{
+mcpx @add '{
   "name": "open-design",
   "transport": "stdio",
   "command": "node",
@@ -182,15 +179,15 @@ still require re-authentication. It may open a browser for interactive OAuth.
 
 Stdio servers are called through `mcpxd`, a user-local daemon that reuses stdio
 MCP sessions across CLI invocations. `mcpxd` starts on demand, keeps idle stdio
-servers warm, and can be inspected or stopped with `mcpx @daemon status` and
-`mcpx @daemon stop`. The daemon process is started through the explicit
-`mcpx @daemon server` subcommand. HTTP servers continue to use the direct client path.
+servers warm, and can be inspected or stopped with `mcpx @daemon.status` and
+`mcpx @daemon.stop`. The daemon process is started through the explicit
+`mcpx @daemon.server` subcommand. HTTP servers continue to use the direct client path.
 
 ## Authentication
 
-Bearer auth is configured explicitly with `--bearer`. Prefer `env:NAME`
+Bearer auth is configured explicitly in the `@add` input. Prefer `env:NAME`
 references so secrets stay out of the registry. `${NAME}` is also accepted when
-passed through the shell literally, for example `--bearer '${POSTHOG_TOKEN}'`.
+passed through the shell literally.
 When several bearer credentials are registered, mcpx advances a local
 round-robin cursor before each HTTP request.
 
@@ -229,10 +226,10 @@ mcpx optimizes output for humans and agents by default:
 - supplemental MCP `structuredContent` is printed as `$structured` only when it
   is not already represented by the primary content
 
-Use `--raw` to preserve raw server text output:
+Use argc context to preserve raw server output:
 
 ```bash
-mcpx posthog projects-get --raw
+mcpx posthog.projects-get --context "{ output: 'raw' }"
 ```
 
 ## Project Skills
@@ -240,7 +237,7 @@ mcpx posthog projects-get --raw
 Generate a project-local skill that tells agents which global MCP servers to use:
 
 ```bash
-mcpx @skill --servers posthog,sentry
+mcpx @skill "{ servers: 'posthog,sentry' }"
 ```
 
 This writes:
@@ -260,7 +257,7 @@ For temporary agent guidance without writing `.agents/skills`, print a one-serve
 skill to stdout:
 
 ```bash
-mcpx @skill --show slack
+mcpx @skill "{ show: 'slack' }"
 ```
 
 ## Skill

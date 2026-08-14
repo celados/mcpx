@@ -41,9 +41,15 @@ export function buildSchemaSelector(servers: string[]): string {
 		throw new Error('Select at least one MCP server.')
 	}
 	if (servers.length === 1) {
-		return `.${servers[0]}`
+		return `.${schemaSelectorKey(servers[0]!)}`
 	}
-	return `.{${servers.join(',')}}`
+	return `.{${servers.map(schemaSelectorKey).join(',')}}`
+}
+
+function schemaSelectorKey(value: string): string {
+	return /^[A-Za-z_$][A-Za-z0-9_$]*$/.test(value)
+		? value
+		: JSON.stringify(value)
 }
 
 export function buildMcpxSkillMarkdown(
@@ -76,37 +82,36 @@ ${serverList}
 Inspect the available tool surface before calling tools:
 
 \`\`\`bash
-mcpx --schema="${selector}"
+mcpx @schema '${selector}'
 \`\`\`
 
 Use schema selectors to narrow large MCP surfaces before choosing a tool:
 
-- \`.server\` shows one server, for example \`mcpx --schema=.posthog\`
-- \`.server.tool\` shows one tool, for example \`mcpx --schema=.posthog.projects-get\`
+- \`.server\` shows one server, for example \`mcpx @schema .posthog\`
+- \`.server."tool-name"\` shows one kebab-case tool, for example \`mcpx @schema '.posthog."projects-get"'\`
 - \`.{a,b}\` selects multiple keys at the current level
 - \`.server.{tool-a,tool-b,tool-c}\` shows a short list of candidate tools
 
-Normal workflow: inspect the project-approved servers first, identify likely
+Normal workflow: inspect the ${scope} servers first, identify likely
 tool names, then follow the schema status line. If the schema says it was fully
 output, call the chosen tool directly. If it says only a compact outline was
 shown, run a narrower selector such as
-\`mcpx --schema=.posthog.{projects-get,alerts-list,alert-create}\`.
+\`mcpx @schema '.posthog.{"projects-get","alerts-list","alert-create"}'\`.
 
 ## Call
 
-Call MCP tools through root server commands and pass tool input only through \`--input\`.
-\`--input\` accepts inline JSON/JSON5, \`@file\`, and \`@-\` stdin values through argc.
+Call MCP tools through dotted command paths and pass one object input token.
 
 \`\`\`bash
-mcpx <server> <tool> --input '{ }'
+mcpx <server>.<tool> '{ }'
 \`\`\`
 
 For larger payloads, prefer file or heredoc input:
 
 \`\`\`bash
-mcpx <server> <tool> --input @payload.json
+mcpx <server>.<tool> @payload.json
 
-mcpx <server> <tool> --input @- <<'JSON'
+mcpx <server>.<tool> - <<'JSON'
 {
   "example": true
 }
@@ -142,9 +147,9 @@ Each entry has \`method\` plus method-specific \`params\`. Special cases:
 
 - \`notifications/progress\` may carry \`aggregatedCount\` on the last entry per progress token, meaning intermediate progress was collapsed (first and last preserved verbatim).
 - \`notifications/tools/list_changed\` is handled by mcpx automatically; no agent action required.
-- \`$oversize\` appears in raw mode when the buffer cap was reached; default output renders it as \`notifications oversize, saved to <path>\`.
+- \`$oversize\` appears in raw context when the buffer cap was reached; default output renders it as \`notifications oversize, saved to <path>\`.
 
-In \`--raw\` mode with a structured result and non-empty notifications, the
+In raw context with a structured result and non-empty notifications, the
 sentinel line is replaced by a JSON envelope:
 
 \`\`\`json
@@ -206,37 +211,23 @@ export function buildAddCommand(
 ): string | undefined {
 	if (declaration.transport === 'stdio') {
 		if (!declaration.command) return undefined
-		const parts = [
-			'mcpx',
-			'@add',
-			'--name',
-			shellQuote(name),
-			'--transport',
-			'stdio',
-			'--command',
-			shellQuote(declaration.command),
-		]
-		for (const arg of declaration.args ?? []) {
-			parts.push('--args', shellQuote(arg))
+		const input: Record<string, unknown> = {
+			name,
+			transport: 'stdio',
+			command: declaration.command,
 		}
-		return parts.join(' ')
+		if (declaration.args?.length) input.args = declaration.args
+		return `mcpx @add ${shellQuote(JSON.stringify(input))}`
 	}
 
 	if (!declaration.url) return undefined
-	const parts = [
-		'mcpx',
-		'@add',
-		'--name',
-		shellQuote(name),
-		'--url',
-		shellQuote(declaration.url),
-	]
+	const input: Record<string, unknown> = { name, url: declaration.url }
 	// Only env:NAME is safe to commit. Literal/stored bearer values stay in the
 	// credential store and are surfaced as a "ask the user" note instead.
-	for (const envName of bearerEnvNames(declaration)) {
-		parts.push('--bearer', `env:${envName}`)
-	}
-	return parts.join(' ')
+	const bearer = bearerEnvNames(declaration).map((envName) => `env:${envName}`)
+	if (bearer.length === 1) input.bearer = bearer[0]
+	if (bearer.length > 1) input.bearer = bearer
+	return `mcpx @add ${shellQuote(JSON.stringify(input))}`
 }
 
 export function buildServersReferenceMarkdown(
@@ -275,7 +266,7 @@ Run only the \`@add\` command for a server that is absent.
 ${sections.join('\n')}
 ## Authenticate
 
-An ordinary \`mcpx <server> <tool>\` call never starts login. If credentials
+An ordinary \`mcpx <server>.<tool>\` call never starts login. If credentials
 are missing or expired:
 
 \`\`\`bash
@@ -285,7 +276,7 @@ mcpx @refresh
 \`@refresh\` may open a browser or prompt for an OAuth client. If the current
 session is not a TTY, ask the user to run it in their terminal.
 
-Once \`mcpx\` lists the server and a focused \`--schema\` call succeeds, return
+Once \`mcpx\` lists the server and a focused \`@schema\` call succeeds, return
 to the skill.
 `
 }
@@ -389,7 +380,7 @@ function serverNotes(declaration: SkillServerDeclaration): string[] {
 	}
 	if (hasSecretBearer(declaration)) {
 		notes.push(
-			'This server requires a bearer token that was not stored as an environment reference. Ask the user for the token and pass it as `--bearer env:NAME` or `--bearer <token>`.',
+			"This server requires a bearer token that was not stored as an environment reference. Ask the user for the token and set `bearer: 'env:NAME'` or a literal bearer value in the `@add` input.",
 		)
 	}
 	return notes

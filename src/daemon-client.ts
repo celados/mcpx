@@ -25,7 +25,7 @@ export async function ensureDaemon(mainPath: string): Promise<void> {
 	}
 
 	await ensureDaemonDir()
-	Bun.spawn([process.execPath, mainPath, '@daemon', 'server'], {
+	Bun.spawn([process.execPath, mainPath, '@daemon.server'], {
 		env: { ...process.env, MCPX_DAEMON_SERVER: '1' },
 		stdin: 'ignore',
 		stdout: 'ignore',

@@ -1,3 +1,4 @@
+import { domainError } from 'argc'
 import { createHash } from 'node:crypto'
 import fs from 'node:fs/promises'
 import { tmpdir } from 'node:os'
@@ -6,13 +7,11 @@ import { stringify as stringifyYaml } from 'yaml'
 
 import type { McpNotification } from './daemon-protocol'
 import type { DaemonOutputEnvelope } from './daemon-result'
-import type { OutputWriter } from './output-writer'
 
 import { unwrapDaemonOutput } from './daemon-result'
-import { stderrWriter, stdoutWriter } from './output-writer'
 
 export type McpxContext = {
-	output: 'yaml' | 'raw'
+	output: 'optimized' | 'raw'
 }
 
 type McpContent = Record<string, unknown> & {
@@ -31,85 +30,84 @@ type McpToolResult = {
 	_meta?: unknown
 }
 
-export async function printOutput(
+export async function renderOutput(
 	value: unknown,
 	context: McpxContext,
-): Promise<void> {
+): Promise<string | undefined> {
+	const lines = await formatOutputLines(value, context)
+	return lines.length === 0 ? undefined : `${lines.join('\n')}\n`
+}
+
+async function formatOutputLines(
+	value: unknown,
+	context: McpxContext,
+): Promise<string[]> {
 	const daemonResponse = unwrapDaemonOutput(value)
 	if (daemonResponse) {
-		await printDaemonOutput(daemonResponse, context)
-		return
+		return formatDaemonOutput(daemonResponse, context)
 	}
 
 	if (isMcpToolResult(value)) {
-		const isError = value.isError === true
-		const write = isError ? stderrWriter : stdoutWriter
-		if (isError) process.exitCode = 1
-
-		await printMcpToolResult(value, context, write)
-		return
+		const lines = await formatMcpToolResult(value, context)
+		if (value.isError === true) {
+			throw domainError(
+				'MCP_TOOL_ERROR',
+				lines.join('\n') || 'The MCP tool returned an error.',
+			)
+		}
+		return lines
 	}
 
 	if (context.output === 'raw') {
-		await stdoutWriter(JSON.stringify(value, null, 2))
-		return
+		return [JSON.stringify(value, null, 2)]
 	}
 
-	await stdoutWriter(formatYaml(value))
+	return [formatYaml(value)]
 }
 
-async function printMcpToolResult(
+async function formatMcpToolResult(
 	value: McpToolResult,
 	context: McpxContext,
-	write: OutputWriter,
-): Promise<void> {
+): Promise<string[]> {
 	const content = value.content ?? []
 	if (content.length > 0) {
-		for (const line of await formatMcpContent(content, context.output)) {
-			await write(line)
-		}
-
+		const lines = await formatMcpContent(content, context.output)
 		const structured = formatSupplementalStructuredContent(
 			value,
 			context.output,
 		)
-		if (structured) await write(structured)
-		return
+		if (structured) lines.push(structured)
+		return lines
 	}
 
 	if (hasStructuredContent(value)) {
-		await write(formatStructuredContent(value, context.output))
+		return [formatStructuredContent(value, context.output)]
 	}
+	return []
 }
 
-async function printDaemonOutput(
+async function formatDaemonOutput(
 	value: DaemonOutputEnvelope,
 	context: McpxContext,
-): Promise<void> {
+): Promise<string[]> {
 	const notifications = value.notifications.map(normalizeNotificationForOutput)
 	if (context.output === 'raw' && isStructuredDaemonResult(value.result)) {
-		await stdoutWriter(
-			JSON.stringify({ result: value.result, notifications }, null, 2),
-		)
-		return
+		return [JSON.stringify({ result: value.result, notifications }, null, 2)]
 	}
 
-	if (context.output === 'yaml') {
+	if (context.output === 'optimized') {
 		// Notifications are only merged when the result is already object-shaped;
 		// arbitrary text stays untouched so existing text consumers are not wrapped.
 		const resultObject = resultAsMergeableObject(value.result)
 		if (resultObject) {
-			await stdoutWriter(
-				formatYaml(mergeNotifications(resultObject, notifications)),
-			)
-			return
+			return [formatYaml(mergeNotifications(resultObject, notifications))]
 		}
 	}
 
-	await printOutput(value.result, context)
-	for (const line of formatNotifications(notifications)) {
-		await stdoutWriter(line)
-	}
+	return [
+		...(await formatOutputLines(value.result, context)),
+		...formatNotifications(notifications),
+	]
 }
 
 function formatNotifications(notifications: McpNotification[]): string[] {
@@ -186,7 +184,7 @@ function isStructuredDaemonResult(value: unknown): boolean {
 
 export async function formatMcpContent(
 	content: McpContent[],
-	outputFormat: McpxContext['output'] = 'yaml',
+	outputFormat: McpxContext['output'] = 'optimized',
 ): Promise<string[]> {
 	const output: string[] = []
 

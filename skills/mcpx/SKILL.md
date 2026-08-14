@@ -13,8 +13,8 @@ or another server registered in the user's global mcpx registry.
 
 - Run `mcpx` directly.
 - Start with the server inventory instead of dumping every registered schema.
-- Call MCP tools as `mcpx <server> <tool> --input <json>`.
-- Pass all tool arguments through `--input`; do not invent flags for MCP tool fields.
+- Call MCP tools as `mcpx <server>.<tool> "<object>"`.
+- Pass one quoted object token, `@file`, or stdin as the complete tool input.
 - Use focused schema selectors before calling tools on large MCP surfaces.
 - Do not hand-edit `~/.agents/mcpx/servers.json` or token cache files unless the user explicitly asks for registry surgery.
 - Treat MCP server registration and OAuth setup as human-owned configuration. If a required server is missing or unauthenticated, stop and ask the user to configure it.
@@ -31,18 +31,18 @@ Choose the likely server from the user's request, then inspect only that server'
 schema:
 
 ```bash
-mcpx --schema=.sentry
-mcpx --schema=.posthog
+mcpx @schema .sentry
+mcpx @schema .posthog
 ```
 
 After that, narrow to the specific tool or a short candidate list:
 
 ```bash
-mcpx --schema=.posthog.projects-get
-mcpx --schema='.posthog.{projects-get,alerts-list,alert-create}'
+mcpx @schema '.posthog."projects-get"'
+mcpx @schema '.posthog.{"projects-get","alerts-list","alert-create"}'
 ```
 
-Avoid `mcpx --schema` unless the user explicitly asks for the complete command
+Avoid bare `mcpx @schema` unless the user explicitly asks for the complete command
 surface. On a real registry it may expand every server schema and waste the
 agent context.
 
@@ -51,16 +51,16 @@ agent context.
 Use inline JSON/JSON5 for tiny inputs:
 
 ```bash
-mcpx posthog projects-get --input '{}'
-mcpx sentry search-issues --input '{"query":"is:unresolved"}'
+mcpx posthog.projects-get '{}'
+mcpx sentry.search-issues '{"query":"is:unresolved"}'
 ```
 
 For non-trivial payloads, prefer `@file` or heredoc input:
 
 ```bash
-mcpx <server> <tool> --input @payload.json
+mcpx <server>.<tool> @payload.json
 
-mcpx <server> <tool> --input @- <<'JSON'
+mcpx <server>.<tool> - <<'JSON'
 {
   "query": "is:unresolved"
 }
@@ -68,9 +68,9 @@ JSON
 ```
 
 Default output is optimized for agents (YAML for structured content,
-direct text passthrough, media saved as `file saved <path>`). Use `--raw` to
-disable that optimization. When a tool emits notifications, `--raw` output may
-also include a JSON envelope — see Notifications below.
+direct text passthrough, media saved as `file saved <path>`). Pass
+`--context "{ output: 'raw' }"` when exact server output is required. Raw output
+may include a JSON notification envelope — see Notifications below.
 
 ## Server Transports
 
@@ -78,20 +78,17 @@ mcpx supports two MCP transports, both configured through `mcpx @add`:
 
 - **HTTP** — default. Remote MCP services like PostHog or Sentry.
 - **Stdio** — local processes started by mcpx, for example
-  `mcpx @add --name fs --transport stdio --command bunx --args -y --args @modelcontextprotocol/server-filesystem --args /tmp/fs-sandbox`.
+  `mcpx @add "{ name: 'fs', transport: 'stdio', command: 'bunx', args: ['-y', '@modelcontextprotocol/server-filesystem', '/tmp/fs-sandbox'] }"`.
 
-HTTP bearer auth uses `--bearer`. Prefer `env:NAME` so secrets stay out of the
-registry. Repeat `--bearer` for multiple credentials; mcpx uses round-robin by
-default:
+HTTP bearer auth accepts `bearer` in the input object. Prefer `env:NAME` so
+secrets stay out of the registry. An array configures round-robin credentials:
 
 ```bash
-mcpx @add --name posthog --url https://mcp.posthog.com/mcp \
-  --bearer env:POSTHOG_TOKEN_A \
-  --bearer env:POSTHOG_TOKEN_B
+mcpx @add "{ name: 'posthog', url: 'https://mcp.posthog.com/mcp', bearer: ['env:POSTHOG_TOKEN_A', 'env:POSTHOG_TOKEN_B'] }"
 ```
 
 After registration both behave identically from the agent's view: same schema
-discovery, same `mcpx <server> <tool> --input ...` call pattern, same output
+discovery, same `mcpx <server>.<tool> '<object>'` call pattern, same output
 shape. You do not need to differentiate when calling tools.
 
 ## Notifications
@@ -138,14 +135,14 @@ Notification methods you may encounter:
 | `$oversize`                           | Synthetic raw-mode marker. Means notifications were saved to a temp JSON file. Default output renders this as `notifications oversize, saved to <path>`. |
 | other (e.g. `notifications/custom/*`) | Passed through verbatim. Server-specific.                                                                                                                |
 
-In `--raw` mode with a structured result and non-empty notifications, the
+In raw context with a structured result and non-empty notifications, the
 trailing sentinel line is replaced by a JSON envelope on stdout:
 
 ```json
 { "result": <tool-result>, "notifications": [ ... ] }
 ```
 
-Text results keep the trailing `$notification:` line even under `--raw`,
+Text results keep the trailing `$notification:` line even in raw context,
 because text content is not JSON and wrapping it would break consumers.
 
 Practical guidance:
@@ -161,7 +158,7 @@ project to expose only that approved set to agents, generate a project-local mcp
 skill:
 
 ```bash
-mcpx @skill --servers posthog,sentry
+mcpx @skill "{ servers: 'posthog,sentry' }"
 ```
 
 This writes:
@@ -181,7 +178,7 @@ For temporary agent guidance without writing `.agents/skills`, print a
 single-server skill to stdout:
 
 ```bash
-mcpx @skill --show slack
+mcpx @skill "{ show: 'slack' }"
 ```
 
 Use this when the user asks for a one-off service action during the current

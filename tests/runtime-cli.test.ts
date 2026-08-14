@@ -5,6 +5,7 @@ import path from 'node:path'
 
 const mainPath = path.join(import.meta.dir, '..', 'src', 'main.ts')
 const fixtureServers: Bun.Server<unknown>[] = []
+const rawContext = ['--context', "{ output: 'raw' }"]
 describe('Runtime CLI adapter lifecycle', () => {
 	let home: string
 
@@ -13,7 +14,7 @@ describe('Runtime CLI adapter lifecycle', () => {
 	})
 
 	afterEach(async () => {
-		await runCli(['@daemon', 'stop', '--raw']).catch(() => {})
+		await runCli(['@daemon.stop', ...rawContext]).catch(() => {})
 		for (const server of fixtureServers.splice(0)) server.stop(true)
 		await fs.rm(home, { recursive: true, force: true })
 	})
@@ -24,15 +25,14 @@ describe('Runtime CLI adapter lifecycle', () => {
 
 		const active = Array.from({ length: 5 }, () =>
 			spawnCli([
-				'controlled',
-				'controlled',
+				'controlled.controlled',
 				'--scenario',
 				'acknowledge',
-				'--raw',
+				...rawContext,
 			]),
 		)
 		await waitFor(async () => {
-			const status = await runCli(['@daemon', 'status', '--raw'])
+			const status = await runCli(['@daemon.status', ...rawContext])
 			if (status.exitCode !== 0) return false
 			const session = JSON.parse(status.stdout).servers[0]
 			return session?.activeCalls === 1 && session?.queuedCalls === 4
@@ -41,14 +41,14 @@ describe('Runtime CLI adapter lifecycle', () => {
 		for (const child of active) child.kill()
 		await Promise.all(active.map((child) => child.exited))
 		await waitFor(async () => {
-			const status = await runCli(['@daemon', 'status', '--raw'])
+			const status = await runCli(['@daemon.status', ...rawContext])
 			return (
 				status.exitCode === 0 &&
 				JSON.parse(status.stdout).servers[0]?.activeCalls === 0
 			)
 		})
 
-		const reused = await runCli(['controlled', 'echo', '--raw'])
+		const reused = await runCli(['controlled.echo', ...rawContext])
 		expect(reused).toEqual({
 			exitCode: 0,
 			stdout: 'echo-ok\n',
@@ -60,7 +60,7 @@ describe('Runtime CLI adapter lifecycle', () => {
 		const fixture = startHttpFixture()
 		await addFixture(fixture.url)
 		const successes = Array.from({ length: 5 }, () =>
-			spawnObserved(['controlled', 'echo', '--raw']),
+			spawnObserved(['controlled.echo', ...rawContext]),
 		)
 		const successResults = await Promise.all(successes.map(waitForExit))
 		expect(successResults).toEqual(
@@ -73,7 +73,7 @@ describe('Runtime CLI adapter lifecycle', () => {
 		for (const child of successes) expect(isAlive(child.pid)).toBe(false)
 
 		const failures = Array.from({ length: 5 }, () =>
-			spawnObserved(['controlled', 'fail', '--raw']),
+			spawnObserved(['controlled.fail', ...rawContext]),
 		)
 		const failureResults = await Promise.all(failures.map(waitForExit))
 		expect(failureResults.every((result) => result.exitCode === 1)).toBe(true)
@@ -82,6 +82,14 @@ describe('Runtime CLI adapter lifecycle', () => {
 				result.stderr.includes('fixture failure'),
 			),
 		).toBe(true)
+		expect(
+			failureResults.every(
+				(result) =>
+					result.stderr.includes('error: DOMAIN_ERROR') &&
+					result.stderr.includes('code: MCP_CALL_FAILED'),
+			),
+			failureResults.map((result) => result.stderr).join('\n---\n'),
+		).toBe(true)
 		for (const child of failures) expect(isAlive(child.pid)).toBe(false)
 	}, 10_000)
 
@@ -89,7 +97,7 @@ describe('Runtime CLI adapter lifecycle', () => {
 		const fixture = startHttpFixture()
 		await addFixture(fixture.url)
 		const children = Array.from({ length: 5 }, () =>
-			spawnCli(['controlled', 'echo', '--raw']),
+			spawnCli(['controlled.echo', ...rawContext]),
 		)
 		await Promise.all(children.map((child) => child.stdout.cancel()))
 		const exitCodes = await Promise.all(
@@ -108,9 +116,9 @@ describe('Runtime CLI adapter lifecycle', () => {
 		await seedExpiredOAuth(fixture.url, fixture.issuer)
 		// Cold-start polling can let the first 25 ms refresh finish before later
 		// processes connect; start the daemon so this test isolates flow sharing.
-		expect((await runCli(['@daemon', 'status', '--raw'])).exitCode).toBe(0)
+		expect((await runCli(['@daemon.status', ...rawContext])).exitCode).toBe(0)
 		const refreshes = Array.from({ length: 5 }, () =>
-			spawnObserved(['@refresh', '--raw']),
+			spawnObserved(['@refresh', ...rawContext]),
 		)
 		const results = await Promise.all(refreshes.map(waitForExit))
 
@@ -122,10 +130,10 @@ describe('Runtime CLI adapter lifecycle', () => {
 	it('cancels an active refresh flow before Runtime stop completes', async () => {
 		const fixture = startHttpFixture({ holdToken: true })
 		await seedExpiredOAuth(fixture.url, fixture.issuer)
-		const refresh = spawnObserved(['@refresh', '--raw'])
+		const refresh = spawnObserved(['@refresh', ...rawContext])
 		await waitFor(async () => fixture.tokenRequests() === 1)
 
-		const stopped = await runCli(['@daemon', 'stop', '--raw'])
+		const stopped = await runCli(['@daemon.stop', ...rawContext])
 		const refreshResult = await waitForExit(refresh)
 
 		expect(stopped.exitCode).toBe(0)
@@ -140,7 +148,7 @@ describe('Runtime CLI adapter lifecycle', () => {
 			'controlled',
 			'--url',
 			url,
-			'--raw',
+			...rawContext,
 		])
 		expect(added.exitCode).toBe(0)
 	}

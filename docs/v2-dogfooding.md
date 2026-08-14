@@ -1,3 +1,10 @@
+---
+type: Playbook
+title: mcpxd V2 Dogfooding
+description: Verify notification buffering, schema write-back, and daemon state through the public CLI.
+when: Runtime notification or daemon behavior changes.
+---
+
 # mcpxd V2 Dogfooding
 
 This document describes the local notification fixture used to verify V2 daemon behavior through
@@ -8,11 +15,7 @@ the same CLI path agents use.
 From the repo root:
 
 ```sh
-bun src/main.ts @add \
-  --name notification-fixture \
-  --transport stdio \
-  --command bun \
-  --args tests/fixtures/notification-mcp-server.mjs
+bun src/main.ts @add "{ name: 'notification-fixture', transport: 'stdio', command: 'bun', args: ['tests/fixtures/notification-mcp-server.mjs'] }"
 ```
 
 Expected output:
@@ -23,10 +26,16 @@ Expected output:
 
 ## Tool Checks
 
+Inspect the kebab-case tool with a quoted selector key:
+
+```sh
+bun src/main.ts @schema '.notification-fixture."progress-stream"'
+```
+
 `progress-stream` emits `notifications/progress` during a call.
 
 ```sh
-bun src/main.ts notification-fixture progress-stream --count 4
+bun src/main.ts notification-fixture.progress-stream "{ count: 4 }"
 ```
 
 Expected:
@@ -38,7 +47,7 @@ Expected:
 `notify-tools-changed` emits `notifications/tools/list_changed` during a call.
 
 ```sh
-bun src/main.ts notification-fixture notify-tools-changed --raw
+bun src/main.ts notification-fixture.notify-tools-changed --context "{ output: 'raw' }"
 ```
 
 Expected:
@@ -49,7 +58,7 @@ Expected:
 `verbatim-notify` emits an unknown notification method.
 
 ```sh
-bun src/main.ts notification-fixture verbatim-notify --raw
+bun src/main.ts notification-fixture.verbatim-notify --context "{ output: 'raw' }"
 ```
 
 Expected:
@@ -59,7 +68,7 @@ Expected:
 `flood-notify` emits enough notifications to exceed the daemon buffer cap.
 
 ```sh
-bun src/main.ts notification-fixture flood-notify
+bun src/main.ts notification-fixture.flood-notify
 ```
 
 Expected:
@@ -70,9 +79,9 @@ Expected:
 `idle-tools-changed` emits `notifications/tools/list_changed` after the current call has completed.
 
 ```sh
-bun src/main.ts notification-fixture idle-tools-changed --raw
+bun src/main.ts notification-fixture.idle-tools-changed --context "{ output: 'raw' }"
 sleep 0.1
-bun src/main.ts notification-fixture progress-stream --count 0 --raw
+bun src/main.ts notification-fixture.progress-stream "{ count: 0 }" --context "{ output: 'raw' }"
 ```
 
 Expected:
@@ -84,7 +93,7 @@ Expected:
 ## Daemon Status
 
 ```sh
-bun src/main.ts @daemon status --raw
+bun src/main.ts @daemon.status --context "{ output: 'raw' }"
 ```
 
 Expected for this fixture:

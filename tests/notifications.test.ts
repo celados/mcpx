@@ -2,7 +2,7 @@ import { describe, expect, it } from 'bun:test'
 
 import { daemonOutputEnvelope } from '../src/daemon-result'
 import { createNotificationBuffer } from '../src/notifications'
-import { printOutput } from '../src/output'
+import { renderOutput } from '../src/output'
 
 describe('notification buffer', () => {
 	it('aggregates intermediate progress notifications by token', () => {
@@ -56,47 +56,22 @@ describe('notification buffer', () => {
 	})
 
 	it('does not expose JSON-RPC transport fields in rendered notifications', async () => {
-		const log = captureConsoleLog()
-		try {
-			await printOutput(
-				daemonOutputEnvelope({
-					result: { content: [{ type: 'text', text: 'ok' }] },
-					notifications: [
-						{
-							method: 'notifications/custom/event',
-							params: { ok: true },
-							jsonrpc: '2.0',
-						} as never,
-					],
-				}),
-				{ output: 'yaml' },
-			)
+		const output = await renderOutput(
+			daemonOutputEnvelope({
+				result: { content: [{ type: 'text', text: 'ok' }] },
+				notifications: [
+					{
+						method: 'notifications/custom/event',
+						params: { ok: true },
+						jsonrpc: '2.0',
+					} as never,
+				],
+			}),
+			{ output: 'optimized' },
+		)
 
-			expect(log.calls.map((call) => call[0])).toEqual([
-				'ok',
-				'$notification: [{"method":"notifications/custom/event","params":{"ok":true}}]',
-			])
-		} finally {
-			log.restore()
-		}
+		expect(output).toBe(
+			'ok\n$notification: [{"method":"notifications/custom/event","params":{"ok":true}}]\n',
+		)
 	})
 })
-
-function captureConsoleLog(): { calls: unknown[][]; restore: () => void } {
-	const original = process.stdout.write
-	const calls: unknown[][] = []
-	process.stdout.write = ((
-		chunk: string | Uint8Array,
-		callback?: () => void,
-	) => {
-		calls.push([String(chunk).replace(/\n$/, '')])
-		callback?.()
-		return true
-	}) as typeof process.stdout.write
-	return {
-		calls,
-		restore: () => {
-			process.stdout.write = original
-		},
-	}
-}

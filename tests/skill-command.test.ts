@@ -30,32 +30,16 @@ function fixtureService(): RegistryView {
 	}
 }
 
-async function captureStdout(run: () => Promise<void>): Promise<string> {
-	const originalWrite = process.stdout.write
-	let output = ''
-	process.stdout.write = ((chunk: string | Uint8Array) => {
-		output += chunk.toString()
-		return true
-	}) as typeof process.stdout.write
-
-	try {
-		await run()
-		return output
-	} finally {
-		process.stdout.write = originalWrite
-	}
-}
-
 describe('mcpx skill command', () => {
 	it('prints a temporary server skill without writing project files', async () => {
 		const cwd = await mkdtemp(join(tmpdir(), 'mcpx-skill-show-'))
-		const output = await captureStdout(async () => {
-			await runSkillCommand(fixtureService(), cwd, { show: 'slack' })
+		const output = await runSkillCommand(fixtureService(), cwd, {
+			show: 'slack',
 		})
 
 		expect(output).toContain('servers: ["slack"]')
 		expect(output).toContain('configured MCP servers')
-		expect(output).toContain('mcpx --schema=".slack"')
+		expect(output).toContain("mcpx @schema '.slack'")
 		await expect(
 			readFile(join(cwd, '.agents', 'skills', 'mcpx', 'SKILL.md'), 'utf8'),
 		).rejects.toThrow()
@@ -63,8 +47,8 @@ describe('mcpx skill command', () => {
 
 	it('writes project skill references from registry declarations', async () => {
 		const cwd = await mkdtemp(join(tmpdir(), 'mcpx-skill-write-'))
-		const output = await captureStdout(async () => {
-			await runSkillCommand(fixtureService(), cwd, { servers: 'posthog,slack' })
+		const output = await runSkillCommand(fixtureService(), cwd, {
+			servers: 'posthog,slack',
 		})
 
 		const skillDir = join(cwd, '.agents', 'skills', 'mcpx')
@@ -76,10 +60,10 @@ describe('mcpx skill command', () => {
 		)
 		expect(skill).toContain('## Troubleshooting')
 		expect(servers).toContain(
-			'mcpx @add --name posthog --url https://mcp.posthog.com/mcp --bearer env:POSTHOG_TOKEN',
+			`mcpx @add '{"name":"posthog","url":"https://mcp.posthog.com/mcp","bearer":"env:POSTHOG_TOKEN"}'`,
 		)
 		expect(servers).toContain(
-			'mcpx @add --name slack --transport stdio --command slack-mcp',
+			`mcpx @add '{"name":"slack","transport":"stdio","command":"slack-mcp"}'`,
 		)
 		expect(servers).not.toContain('xoxb-secret')
 	})

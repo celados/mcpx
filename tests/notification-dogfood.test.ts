@@ -10,6 +10,7 @@ const fixturePath = path.join(
 	'fixtures',
 	'notification-mcp-server.mjs',
 )
+const rawContext = ['--context', "{ output: 'raw' }"]
 
 let home: string
 
@@ -19,7 +20,7 @@ describe('notification fixture dogfood', () => {
 	})
 
 	afterEach(async () => {
-		await runMcpx(['@daemon', 'stop']).catch(() => {})
+		await runMcpx(['@daemon.stop']).catch(() => {})
 		await fs.rm(home, { recursive: true, force: true })
 	})
 
@@ -34,7 +35,7 @@ describe('notification fixture dogfood', () => {
 			process.execPath,
 			'--args',
 			fixturePath,
-			'--raw',
+			...rawContext,
 		])
 		expect(JSON.parse(added.stdout)).toMatchObject({
 			name: 'notification-fixture',
@@ -44,14 +45,8 @@ describe('notification fixture dogfood', () => {
 		})
 
 		const progress = parseMcpxOutput(
-			(
-				await runMcpx([
-					'notification-fixture',
-					'progress-stream',
-					'--count',
-					'4',
-				])
-			).stdout,
+			(await runMcpx(['notification-fixture.progress-stream', '--count', '4']))
+				.stdout,
 		)
 		expect(progress.text).toBe('progress-stream-ok')
 		expect(progress.structured).toEqual({
@@ -81,11 +76,10 @@ describe('notification fixture dogfood', () => {
 		const progressRaw = parseMcpxOutput(
 			(
 				await runMcpx([
-					'notification-fixture',
-					'progress-stream',
+					'notification-fixture.progress-stream',
 					'--count',
 					'4',
-					'--raw',
+					...rawContext,
 				])
 			).stdout,
 		)
@@ -117,7 +111,12 @@ describe('notification fixture dogfood', () => {
 		const discardedRaw = parseMcpxOutput(
 			(
 				await runMcpx(
-					['notification-fixture', 'progress-stream', '--count', '4', '--raw'],
+					[
+						'notification-fixture.progress-stream',
+						'--count',
+						'4',
+						...rawContext,
+					],
 					{ MCPX_NOTIFICATION_MODE: 'discard' },
 				)
 			).stdout,
@@ -129,15 +128,19 @@ describe('notification fixture dogfood', () => {
 		})
 
 		const toolsChanged = parseMcpxOutput(
-			(await runMcpx(['notification-fixture', 'notify-tools-changed', '--raw']))
-				.stdout,
+			(
+				await runMcpx([
+					'notification-fixture.notify-tools-changed',
+					...rawContext,
+				])
+			).stdout,
 		)
 		expect(toolsChanged.notification).toContainEqual({
 			method: 'notifications/tools/list_changed',
 		})
 
 		const verbatim = parseMcpxOutput(
-			(await runMcpx(['notification-fixture', 'verbatim-notify', '--raw']))
+			(await runMcpx(['notification-fixture.verbatim-notify', ...rawContext]))
 				.stdout,
 		)
 		expect(verbatim.notification).toEqual([
@@ -148,7 +151,7 @@ describe('notification fixture dogfood', () => {
 		])
 
 		const flood = parseMcpxOutput(
-			(await runMcpx(['notification-fixture', 'flood-notify'])).stdout,
+			(await runMcpx(['notification-fixture.flood-notify'])).stdout,
 		)
 		expect(flood.text).toBe('flood-notify-ok')
 		expect(flood.structured).toEqual({ tool: 'flood-notify' })
@@ -168,20 +171,19 @@ describe('notification fixture dogfood', () => {
 		})
 
 		const beforeIdle = await readRegisteredServerDiscoveredAt()
-		await runMcpx(['notification-fixture', 'idle-tools-changed', '--raw'])
+		await runMcpx(['notification-fixture.idle-tools-changed', ...rawContext])
 		await sleep(75)
 		await runMcpx([
-			'notification-fixture',
-			'progress-stream',
+			'notification-fixture.progress-stream',
 			'--count',
 			'0',
-			'--raw',
+			...rawContext,
 		])
 		const afterIdle = await readRegisteredServerDiscoveredAt()
 		expect(afterIdle).not.toBe(beforeIdle)
 
 		const status = JSON.parse(
-			(await runMcpx(['@daemon', 'status', '--raw'])).stdout,
+			(await runMcpx(['@daemon.status', ...rawContext])).stdout,
 		)
 		expect(status.servers).toContainEqual(
 			expect.objectContaining({
@@ -195,8 +197,14 @@ describe('notification fixture dogfood', () => {
 		)
 
 		const removed = JSON.parse(
-			(await runMcpx(['@remove', '--name', 'notification-fixture', '--raw']))
-				.stdout,
+			(
+				await runMcpx([
+					'@remove',
+					'--name',
+					'notification-fixture',
+					...rawContext,
+				])
+			).stdout,
 		)
 		expect(removed).toEqual({
 			name: 'notification-fixture',

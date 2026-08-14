@@ -12,7 +12,7 @@ unexpected behavior. Use it before filing an issue.
 ## Inspect daemon state
 
 ```bash
-mcpx @daemon status --raw
+mcpx @daemon.status --context "{ output: 'raw' }"
 ```
 
 Returns JSON with:
@@ -36,7 +36,7 @@ Returns JSON with:
 ## Reset the daemon
 
 ```bash
-mcpx @daemon stop
+mcpx @daemon.stop
 ```
 
 Closes all daemon-managed MCP sessions and exits the daemon. The next `mcpx`

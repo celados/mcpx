@@ -19,11 +19,11 @@ export async function runSkillCommand(
 	registry: RegistryView,
 	cwd: string,
 	input: SkillCommandInput,
-): Promise<void> {
+): Promise<string> {
 	const availableServers = Object.keys(registry.servers).sort()
 	if (availableServers.length === 0) {
 		throw new Error(
-			'No MCP servers are registered. Run "mcpx @add --name <name> --url <url>" first.',
+			`No MCP servers are registered. Run mcpx @add "{ name: '<name>', url: '<url>' }" first.`,
 		)
 	}
 
@@ -32,10 +32,7 @@ export async function runSkillCommand(
 			throw new Error('--show cannot be combined with --servers.')
 		}
 		const server = normalizeShownServer(input.show, availableServers)
-		process.stdout.write(
-			buildMcpxSkillMarkdown([server], { projectLocal: false }),
-		)
-		return
+		return buildMcpxSkillMarkdown([server], { projectLocal: false })
 	}
 
 	const selectedServers =
@@ -51,7 +48,7 @@ export async function runSkillCommand(
 		servers: selectedServers,
 		declarations: registry.servers,
 	})
-	process.stdout.write(`Wrote ${skillDir}\n`)
+	return `Wrote ${skillDir}\n`
 }
 
 async function promptForServers(

@@ -8,7 +8,14 @@ import {
 	text,
 } from '@clack/prompts'
 import { toStandardJsonSchema } from '@valibot/to-json-schema'
-import { c, cli, createDefaultSchemaExplorer, group, type Router } from 'argc'
+import {
+	c,
+	cli,
+	createDefaultSchemaExplorer,
+	domainError,
+	group,
+	type Router,
+} from 'argc'
 import * as v from 'valibot'
 
 import type { RuntimeInputRequest, RuntimeIntent } from './runtime-protocol'
@@ -21,7 +28,7 @@ import { daemonOutputEnvelope } from './daemon-result'
 import { runDaemonServer } from './daemon-server'
 import { jsonSchemaToStandardSchema } from './json-schema-standard'
 import { assertServerName } from './names'
-import { printOutput, type McpxContext } from './output'
+import { renderOutput, type McpxContext } from './output'
 import { requestRuntime } from './runtime-client'
 import { runSkillCommand } from './skill-command'
 import { MCPX_VERSION } from './version'
@@ -43,9 +50,9 @@ type AddServerInput = {
 	env?: Record<string, string>
 }
 
-const globalInput = s(
+const outputContext = s(
 	v.object({
-		raw: v.optional(v.boolean()),
+		output: v.optional(v.picklist(['optimized', 'raw']), 'optimized'),
 	}),
 )
 
@@ -120,35 +127,17 @@ export async function runMcpx(
 		name: 'mcpx',
 		version: MCPX_VERSION,
 		description: 'Global MCP registry and agent-facing command surface.',
-		globals: globalInput,
-		context: (globals) => {
-			return { output: globals.raw ? 'raw' : 'yaml' }
-		},
+		context: outputContext,
 		schemaExplorer: createDefaultSchemaExplorer({
 			selectionDepth: 2,
 			maxLines: 1000,
 		}),
 	})
 
-	const normalizedArgv = normalizeArgv(argv)
-	if (!normalizedArgv) {
-		console.error(
-			'Invalid option "--json". Use "--raw" to disable output optimization.',
-		)
-		process.exit(1)
-	}
-
 	await app.run(
 		{ handlers: buildHandlers(registry, cwd, mainPath) } as never,
-		normalizedArgv,
+		argv,
 	)
-}
-
-function normalizeArgv(argv: string[]): string[] | null {
-	if (argv.some((arg) => arg === '--json' || arg.startsWith('--json=')))
-		return null
-	if (!argv.includes('--raw')) return argv
-	return [...argv.filter((arg) => arg !== '--raw'), '--raw']
 }
 
 function buildRouter(registry: RegistryView): Router {
@@ -159,8 +148,8 @@ function buildRouter(registry: RegistryView): Router {
 				description:
 					'Add a global MCP server and discover its auth and tool schema.',
 				examples: [
-					'mcpx @add --name posthog --url https://mcp.posthog.com/mcp --bearer env:POSTHOG_AUTH_HEADER',
-					'mcpx @add --name open-design --transport stdio --command node --args /path/to/open-design/apps/daemon/dist/cli.js --args mcp',
+					`mcpx @add "{ name: 'posthog', url: 'https://mcp.posthog.com/mcp', bearer: 'env:POSTHOG_AUTH_HEADER' }"`,
+					`mcpx @add "{ name: 'open-design', transport: 'stdio', command: 'node', args: ['/path/to/open-design/apps/daemon/dist/cli.js', 'mcp'] }"`,
 				],
 			})
 			.input(addInput),
@@ -168,8 +157,8 @@ function buildRouter(registry: RegistryView): Router {
 			.meta({
 				description: 'Remove a global MCP server and its cached credentials.',
 				examples: [
-					'mcpx @remove --name posthog',
-					'mcpx @remove --name posthog,sentry',
+					`mcpx @remove "{ name: 'posthog' }"`,
+					`mcpx @remove "{ name: 'posthog,sentry' }"`,
 					'mcpx @remove',
 				],
 			})
@@ -184,15 +173,15 @@ function buildRouter(registry: RegistryView): Router {
 			{
 				status: c.meta({
 					description: 'Show local mcpxd daemon status.',
-					examples: ['mcpx @daemon status'],
+					examples: ['mcpx @daemon.status'],
 				}),
 				stop: c.meta({
 					description: 'Stop local mcpxd and its managed stdio MCP processes.',
-					examples: ['mcpx @daemon stop'],
+					examples: ['mcpx @daemon.stop'],
 				}),
 				server: c.meta({
 					description: 'Run the local mcpxd daemon server.',
-					examples: ['mcpx @daemon server'],
+					examples: ['mcpx @daemon.server'],
 				}),
 			},
 		),
@@ -202,8 +191,8 @@ function buildRouter(registry: RegistryView): Router {
 					'Generate a project skill or print a temporary server skill for agents.',
 				examples: [
 					'mcpx @skill',
-					'mcpx @skill --servers posthog,sentry',
-					'mcpx @skill --show slack',
+					`mcpx @skill "{ servers: 'posthog,sentry' }"`,
+					`mcpx @skill "{ show: 'slack' }"`,
 				],
 			})
 			.input(skillInput),
@@ -289,18 +278,27 @@ function buildHandlers(
 			serverHandlers[tool.commandName] = async (
 				options: HandlerOptions<Record<string, unknown>>,
 			) => {
-				const result = await requestRuntime(
-					{
-						requestId: crypto.randomUUID(),
-						op: 'call',
-						serverName,
-						toolName: tool.name,
-						input: options.input,
-						notificationMode: notificationModeFromEnv(),
-					},
-					mainPath,
-				)
-				await printOutput(runtimeCallOutput(result), options.context)
+				let result: unknown
+				try {
+					result = await requestRuntime(
+						{
+							requestId: crypto.randomUUID(),
+							op: 'call',
+							serverName,
+							toolName: tool.name,
+							input: options.input,
+							notificationMode: notificationModeFromEnv(),
+						},
+						mainPath,
+					)
+				} catch (error) {
+					throw domainError(
+						'MCP_CALL_FAILED',
+						error instanceof Error ? error.message : String(error),
+						{ server: serverName, tool: tool.name },
+					)
+				}
+				return await renderOutput(runtimeCallOutput(result), options.context)
 			}
 		}
 		handlers[serverName] = serverHandlers
@@ -325,7 +323,10 @@ function buildHandlers(
 			const bearer = normalizeStringList(discovered.bearer)
 			if (bearer) intent.bearer = bearer
 		}
-		await printOutput(await requestRuntime(intent, mainPath), options.context)
+		return await renderOutput(
+			await requestRuntime(intent, mainPath),
+			options.context,
+		)
 	}
 
 	handlers['@remove'] = async (options: HandlerOptions<{ name?: string }>) => {
@@ -335,7 +336,7 @@ function buildHandlers(
 				? await promptForServersToRemove(registry)
 				: parseRemoveNames(rawName)
 
-		await printOutput(
+		return await renderOutput(
 			await requestRuntime(
 				{
 					requestId: crypto.randomUUID(),
@@ -351,7 +352,7 @@ function buildHandlers(
 	handlers['@refresh'] = async (
 		options: HandlerOptions<Record<string, never>>,
 	) => {
-		await printOutput(
+		return await renderOutput(
 			await requestRuntime(
 				{ requestId: crypto.randomUUID(), op: 'refreshServers' },
 				mainPath,
@@ -363,7 +364,7 @@ function buildHandlers(
 
 	handlers['@daemon'] = {
 		status: async (options: HandlerOptions<Record<string, never>>) => {
-			await printOutput(
+			return await renderOutput(
 				await requestRuntime(
 					{ requestId: crypto.randomUUID(), op: 'status' },
 					mainPath,
@@ -372,7 +373,7 @@ function buildHandlers(
 			)
 		},
 		stop: async (options: HandlerOptions<Record<string, never>>) => {
-			await printOutput(
+			return await renderOutput(
 				await requestRuntime(
 					{ requestId: crypto.randomUUID(), op: 'stop' },
 					mainPath,
@@ -389,7 +390,7 @@ function buildHandlers(
 	handlers['@skill'] = async (
 		options: HandlerOptions<{ servers?: string; show?: string }>,
 	) => {
-		await runSkillCommand(registry, cwd, options.input)
+		return await runSkillCommand(registry, cwd, options.input)
 	}
 
 	return handlers
@@ -511,7 +512,6 @@ export const __test = {
 	buildHandlers,
 	describeServerTools,
 	describeTool,
-	normalizeArgv,
 	addDiscoverOptions,
 }
 

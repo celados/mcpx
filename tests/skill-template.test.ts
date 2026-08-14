@@ -17,6 +17,10 @@ describe('mcpx skill template', () => {
 	it('builds argc schema selectors for selected servers', () => {
 		expect(buildSchemaSelector(['posthog'])).toBe('.posthog')
 		expect(buildSchemaSelector(['posthog', 'sentry'])).toBe('.{posthog,sentry}')
+		expect(buildSchemaSelector(['cf-docs'])).toBe('."cf-docs"')
+		expect(buildSchemaSelector(['cf-docs', 'sentry'])).toBe(
+			'.{"cf-docs",sentry}',
+		)
 	})
 
 	it('writes a project-local mcpx skill with troubleshooting references', async () => {
@@ -54,14 +58,14 @@ describe('mcpx skill template', () => {
 		expect(content).toContain(
 			'description: "Use project-approved MCP tools through mcpx. Trigger when the user asks to inspect or operate services backed by these MCP servers: posthog, sentry."',
 		)
-		expect(content).toContain('mcpx --schema=".{posthog,sentry}"')
+		expect(content).toContain("mcpx @schema '.{posthog,sentry}'")
 		expect(content).toContain('`.server.{tool-a,tool-b,tool-c}`')
 		expect(content).toContain(
-			'mcpx --schema=.posthog.{projects-get,alerts-list,alert-create}',
+			`mcpx @schema '.posthog.{"projects-get","alerts-list","alert-create"}'`,
 		)
-		expect(content).toContain("mcpx <server> <tool> --input '{ }'")
-		expect(content).toContain('mcpx <server> <tool> --input @payload.json')
-		expect(content).toContain("mcpx <server> <tool> --input @- <<'JSON'")
+		expect(content).toContain("mcpx <server>.<tool> '{ }'")
+		expect(content).toContain('mcpx <server>.<tool> @payload.json')
+		expect(content).toContain("mcpx <server>.<tool> - <<'JSON'")
 		expect(content).toContain('## Troubleshooting')
 		expect(content).toContain('references/install.md')
 		expect(content).toContain('references/servers.md')
@@ -70,10 +74,10 @@ describe('mcpx skill template', () => {
 			'https://raw.githubusercontent.com/celados/mcpx/main/install.sh',
 		)
 		expect(servers).toContain(
-			'mcpx @add --name posthog --url https://mcp.posthog.com/mcp --bearer env:POSTHOG_TOKEN',
+			`mcpx @add '{"name":"posthog","url":"https://mcp.posthog.com/mcp","bearer":"env:POSTHOG_TOKEN"}'`,
 		)
 		expect(servers).toContain(
-			'mcpx @add --name sentry --url https://mcp.sentry.dev/mcp',
+			`mcpx @add '{"name":"sentry","url":"https://mcp.sentry.dev/mcp"}'`,
 		)
 		expect(servers).toContain('mcpx @refresh')
 	})
@@ -84,7 +88,7 @@ describe('mcpx skill template', () => {
 		expect(content).toContain('servers: ["slack"]')
 		expect(content).toContain('configured MCP servers')
 		expect(content).not.toContain('project-approved MCP servers')
-		expect(content).toContain('mcpx --schema=".slack"')
+		expect(content).toContain("mcpx @schema '.slack'")
 		expect(content).not.toContain('## Troubleshooting')
 		expect(content).not.toContain('references/install.md')
 	})
@@ -104,7 +108,7 @@ describe('mcpx skill template', () => {
 		})
 
 		expect(servers).toContain(
-			'mcpx @add --name posthog --url https://mcp.posthog.com/mcp',
+			`mcpx @add '{"name":"posthog","url":"https://mcp.posthog.com/mcp"}'`,
 		)
 		expect(servers).not.toContain('sk-super-secret')
 		expect(servers).not.toContain('posthog:bearer:0')
@@ -129,7 +133,7 @@ describe('mcpx skill template', () => {
 		})
 
 		expect(servers).toContain(
-			'mcpx @add --name open-design --transport stdio --command node --args /Users/dio/open-design/cli.js --args mcp',
+			`mcpx @add '{"name":"open-design","transport":"stdio","command":"node","args":["/Users/dio/open-design/cli.js","mcp"]}'`,
 		)
 		expect(servers).toContain('machine-local paths')
 		expect(servers).not.toContain('super-secret-env')
@@ -140,7 +144,9 @@ describe('mcpx skill template', () => {
 			buildAddCommand('docs', {
 				url: 'https://example.test/mcp?x=1&y=2',
 			}),
-		).toBe("mcpx @add --name docs --url 'https://example.test/mcp?x=1&y=2'")
+		).toBe(
+			`mcpx @add '{"name":"docs","url":"https://example.test/mcp?x=1&y=2"}'`,
+		)
 	})
 
 	it('falls back when a selected server has no declaration', () => {
