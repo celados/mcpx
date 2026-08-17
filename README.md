@@ -147,6 +147,7 @@ mcpx @daemon.status
 mcpx @daemon.stop
 mcpx @daemon.server
 mcpx @skill
+mcpx @skill-install
 ```
 
 Server names cannot start with `@`.
@@ -237,7 +238,7 @@ mcpx posthog.projects-get --context "{ output: 'raw' }"
 Generate a project-local skill that tells agents which global MCP servers to use:
 
 ```bash
-mcpx @skill "{ servers: 'posthog,sentry' }"
+mcpx @skill-install "{ servers: 'posthog,sentry' }"
 ```
 
 This writes:
@@ -257,12 +258,12 @@ For temporary agent guidance without writing `.agents/skills`, print a one-serve
 skill to stdout:
 
 ```bash
-mcpx @skill "{ show: 'slack' }"
+mcpx @skill-install "{ show: 'slack' }"
 ```
 
 ## Skill
 
-General mcpx skill definition lives at `skills/mcpx/SKILL.md`.
+General mcpx skill definition lives at `src/SKILL.md` (served by `mcpx @skill`).
 
 ## License
 

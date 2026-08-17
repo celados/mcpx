@@ -31,6 +31,7 @@ import { assertServerName } from './names'
 import { renderOutput, type McpxContext } from './output'
 import { requestRuntime } from './runtime-client'
 import { runSkillCommand } from './skill-command'
+import { embedSkill } from './skill.embed.ts' with { type: 'macro' }
 import { MCPX_VERSION } from './version'
 
 const s = toStandardJsonSchema
@@ -132,6 +133,7 @@ export async function runMcpx(
 			selectionDepth: 2,
 			maxLines: 1000,
 		}),
+		skill: embedSkill(),
 	})
 
 	await app.run(
@@ -185,14 +187,14 @@ function buildRouter(registry: RegistryView): Router {
 				}),
 			},
 		),
-		'@skill': c
+		'@skill-install': c
 			.meta({
 				description:
 					'Generate a project skill or print a temporary server skill for agents.',
 				examples: [
-					'mcpx @skill',
-					`mcpx @skill "{ servers: 'posthog,sentry' }"`,
-					`mcpx @skill "{ show: 'slack' }"`,
+					'mcpx @skill-install',
+					`mcpx @skill-install "{ servers: 'posthog,sentry' }"`,
+					`mcpx @skill-install "{ show: 'slack' }"`,
 				],
 			})
 			.input(skillInput),
@@ -387,7 +389,7 @@ function buildHandlers(
 		},
 	}
 
-	handlers['@skill'] = async (
+	handlers['@skill-install'] = async (
 		options: HandlerOptions<{ servers?: string; show?: string }>,
 	) => {
 		return await runSkillCommand(registry, cwd, options.input)
