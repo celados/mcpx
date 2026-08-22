@@ -1,4 +1,4 @@
-import { pickFiles } from 'argc/skill'
+import { pickFiles } from '@celados/argc/skill'
 
 // Build-time picker: which src/ files are agent-facing is an editorial
 // decision per project — keep the list explicit, not a framework convention.

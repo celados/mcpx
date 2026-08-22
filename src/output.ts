@@ -1,4 +1,4 @@
-import { domainError } from 'argc'
+import { domainError } from '@celados/argc'
 import { createHash } from 'node:crypto'
 import fs from 'node:fs/promises'
 import { tmpdir } from 'node:os'

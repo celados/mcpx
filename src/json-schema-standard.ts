@@ -1,4 +1,4 @@
-import type { StandardJSONSchemaV1, StandardSchemaV1 } from 'argc'
+import type { StandardJSONSchemaV1, StandardSchemaV1 } from '@celados/argc'
 
 import type { JsonSchema } from './types'
 
