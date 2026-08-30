@@ -263,7 +263,7 @@ mcpx @skill-install "{ show: 'slack' }"
 
 ## Skill
 
-General mcpx skill definition lives at `src/SKILL.md` (served by `mcpx @skill`).
+General mcpx skill definition lives at `src/index.md` (served by `mcpx @skill`).
 
 ## License
 
