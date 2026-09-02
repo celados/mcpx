@@ -24,7 +24,10 @@ jobs:
         with:
           bun-version: latest
 
+      - run: cp .npmrc.tpl .npmrc
       - run: bun install
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
       - run: bun run check
       - run: bun run build
 
