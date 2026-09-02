@@ -176,7 +176,9 @@ mcpx @add '{
 
 `@refresh` checks every registered MCP server, repairs OAuth state first,
 refreshes cached tool schemas after auth is ready, and reports servers that
-still require re-authentication. It may open a browser for interactive OAuth.
+still require re-authentication. OAuth failures include the server name and do
+not prevent the remaining servers from being checked. It may open a browser for
+interactive OAuth.
 
 Stdio servers are called through `mcpxd`, a user-local daemon that reuses stdio
 MCP sessions across CLI invocations. `mcpxd` starts on demand, keeps idle stdio

@@ -107,7 +107,7 @@ output: one entry per origin
       tools:
         - name: deploy_status
           description: ...
-          inputSchema: {...}
+          inputSchema: { ... }
 ```
 
 Semantics:
@@ -186,12 +186,12 @@ gate on it.
 
 ## Alternatives considered
 
-| Alternative | Rejected because |
-| --- | --- |
-| Ship only raw chrome-devtools tools | Leaves Gap-A aggregation to every agent, every time |
-| Custom MCP server speaking CDP directly | Duplicates upstream flag/feature handling for zero added capability |
+| Alternative                                | Rejected because                                                         |
+| ------------------------------------------ | ------------------------------------------------------------------------ |
+| Ship only raw chrome-devtools tools        | Leaves Gap-A aggregation to every agent, every time                      |
+| Custom MCP server speaking CDP directly    | Duplicates upstream flag/feature handling for zero added capability      |
 | Persistent tools directory backed by cache | Violates ADR-0003 separation by dressing observed history as declaration |
-| `Runtime.evaluate`-backed code mode | Works for any page and therefore bypasses WebMCP entirely; wrong layer |
+| `Runtime.evaluate`-backed code mode        | Works for any page and therefore bypasses WebMCP entirely; wrong layer   |
 
 ## Risks
 

@@ -152,6 +152,74 @@ describe('Runtime explicit authentication', () => {
 		expect(second.frames).toEqual([])
 	})
 
+	it('continues past a failed refresh and attributes the failure to its server', async () => {
+		const stores = await createStores(
+			{
+				url: 'http://127.0.0.1:1/broken/mcp',
+				auth: {
+					kind: 'oauth-token',
+					tokenKey: 'broken:http://127.0.0.1:1',
+					confidence: 'confirmed',
+				},
+			},
+			{
+				'broken:http://127.0.0.1:1': {
+					accessToken: 'broken-access',
+					refreshToken: 'broken-refresh',
+					clientId: 'broken-client',
+					tokenType: 'bearer',
+					expiresAt: '2000-01-01T00:00:00.000Z',
+				},
+			},
+			'broken',
+		)
+		await stores.upsertServer('working', {
+			url: 'http://127.0.0.1:1/working/mcp',
+			auth: {
+				kind: 'oauth-token',
+				tokenKey: 'working:http://127.0.0.1:1',
+				confidence: 'confirmed',
+			},
+		})
+		await stores.updateState((state) => {
+			state.credentials.oauth['working:http://127.0.0.1:1'] = {
+				accessToken: 'working-access',
+				refreshToken: 'working-refresh',
+				clientId: 'working-client',
+				tokenType: 'bearer',
+				expiresAt: '2000-01-01T00:00:00.000Z',
+			}
+		})
+		const authentication = new RuntimeAuthentication(stores, {
+			refreshToken: async ({ resourceUrl }) => {
+				if (resourceUrl.includes('/broken/'))
+					throw new Error('OAuth token refresh failed: invalid_grant')
+				return {
+					accessToken: 'rotated-access',
+					refreshToken: 'rotated-refresh',
+					clientId: 'working-client',
+					tokenType: 'bearer',
+					expiresAt: '2000-01-01T01:00:00.000Z',
+				}
+			},
+		})
+		const caller = createInMemoryRuntimeCaller('partial-refresh')
+
+		const outcome = await authentication.refreshServers(undefined, caller)
+
+		expect(outcome).toEqual({
+			status: 'completed',
+			refreshed: ['working'],
+			failed: [
+				{
+					serverName: 'broken',
+					message:
+						'Failed to refresh broken: OAuth token refresh failed: invalid_grant',
+				},
+			],
+		})
+	})
+
 	it('requests manual OAuth client input from the CLI caller and persists it in Runtime state', async () => {
 		const stores = await createStores({
 			url: 'http://127.0.0.1:1/mcp',
@@ -276,19 +344,20 @@ describe('Runtime explicit authentication', () => {
 		expect(secondPrompted).toBe(true)
 		expect(outcomes).toEqual([
 			{ status: 'disconnected' },
-			{ status: 'completed', refreshed: ['fixture'] },
+			{ status: 'completed', refreshed: ['fixture'], failed: [] },
 		])
 	})
 
 	async function createStores(
 		server: Record<string, unknown>,
 		oauth: Record<string, unknown> = {},
+		name = 'fixture',
 	) {
 		const root = await fs.mkdtemp(path.join(tmpdir(), 'mcpx-runtime-auth-'))
 		roots.push(root)
 		await fs.writeFile(
 			path.join(root, 'servers.json'),
-			JSON.stringify({ version: 1, servers: { fixture: server } }),
+			JSON.stringify({ version: 1, servers: { [name]: server } }),
 		)
 		await fs.writeFile(
 			path.join(root, 'tokens.json'),

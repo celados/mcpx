@@ -11,8 +11,17 @@ type AuthenticationResult = Awaited<
 >
 
 export type RuntimeRefreshOutcome =
-	| { status: 'completed'; refreshed: string[] }
+	| {
+			status: 'completed'
+			refreshed: string[]
+			failed: RuntimeRefreshFailure[]
+	  }
 	| { status: 'disconnected' }
+
+export type RuntimeRefreshFailure = {
+	serverName: string
+	message: string
+}
 
 export class RuntimeAuthentication {
 	readonly #stores: RuntimeStores
@@ -49,6 +58,7 @@ export class RuntimeAuthentication {
 		const registry = await this.#stores.registry.read()
 		const names = serverNames ?? Object.keys(registry.servers).sort()
 		const refreshed: string[] = []
+		const failed: RuntimeRefreshFailure[] = []
 
 		for (const name of names) {
 			const server = registry.servers[name]
@@ -60,19 +70,35 @@ export class RuntimeAuthentication {
 			}
 			if (server.transport === 'stdio') continue
 
-			const outcome =
-				server.auth.kind === 'oauth-token'
-					? await this.#refreshExisting(name, server, caller)
-					: server.auth.kind === 'oauth'
-						? await this.#authenticateDiscovered(name, server, caller)
-						: { status: 'completed' as const }
+			let outcome
+			try {
+				outcome =
+					server.auth.kind === 'oauth-token'
+						? await this.#refreshExisting(name, server, caller)
+						: server.auth.kind === 'oauth'
+							? await this.#authenticateDiscovered(name, server, caller)
+							: { status: 'completed' as const }
+			} catch (error) {
+				// Cancellation is operation-wide; provider-specific failures should not
+				// hide the state of servers that have not been checked yet.
+				if (
+					error instanceof RuntimeOperationError &&
+					error.code === 'cancelled'
+				)
+					throw error
+				failed.push({
+					serverName: name,
+					message: `Failed to refresh ${name}: ${errorMessage(error)}`,
+				})
+				continue
+			}
 			if (outcome.status === 'disconnected') return outcome
 			if (server.auth.kind === 'oauth-token' || server.auth.kind === 'oauth') {
 				refreshed.push(name)
 			}
 		}
 
-		return { status: 'completed', refreshed }
+		return { status: 'completed', refreshed, failed }
 	}
 
 	async #refreshExisting(
@@ -206,4 +232,8 @@ function reauthRequired(serverName: string): RuntimeOperationError {
 		'reauth-required',
 		`Credentials for ${serverName} must be refreshed.`,
 	)
+}
+
+function errorMessage(error: unknown): string {
+	return error instanceof Error ? error.message : String(error)
 }

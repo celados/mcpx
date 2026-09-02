@@ -19,10 +19,10 @@ current primitives do not provide without additional normalization and runtime
 work.
 
 | Severity | Count |
-| --- | ---: |
-| blocker | 1 |
-| major | 6 |
-| minor | 3 |
+| -------- | ----: |
+| blocker  |     1 |
+| major    |     6 |
+| minor    |     3 |
 
 ## Blocker
 
@@ -35,7 +35,7 @@ work.
 makes origin identifiers resolve against “fresh observations”
 (`webmcp-bridge.md:180-182`). Current chrome-devtools-mcp instead assigns an ID
 to a Puppeteer `Page`; ordinary navigation keeps that `Page` and ID. Its
-`execute_webmcp_tool` implementation then searches the *current* page's tools by
+`execute_webmcp_tool` implementation then searches the _current_ page's tools by
 name. A tab can therefore navigate after discovery and expose a same-named tool
 that executes successfully rather than producing a stale error. See the pinned
 upstream [`McpContext.ts`](https://github.com/ChromeDevTools/chrome-devtools-mcp/blob/2dc104ce1bec57f17763cb7d72b33e03057a79bc/src/McpContext.ts)

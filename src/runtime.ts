@@ -93,7 +93,11 @@ export class McpRuntime {
 					const snapshot = await this.#stores.readSnapshot()
 					const names =
 						intent.serverNames ?? Object.keys(snapshot.servers).sort()
+					const failedAuth = new Set(
+						outcome.failed.map((failure) => failure.serverName),
+					)
 					for (const name of names) {
+						if (failedAuth.has(name)) continue
 						const tools = await this.#sessions.listTools(name, caller)
 						await this.#stores.updateState((state) => {
 							state.schemas.servers[name] = {
