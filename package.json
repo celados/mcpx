@@ -1,6 +1,6 @@
 {
 	"name": "mcpx",
-	"version": "0.12.2",
+	"version": "0.12.3",
 	"license": "MIT",
 	"bin": {
 		"mcpx": "./src/main.ts"
@@ -16,7 +16,7 @@
 		"test": "bun test"
 	},
 	"dependencies": {
-		"@celados/argc": "^7.11.0",
+		"@celados/argc": "^7.11.1",
 		"@clack/prompts": "^1.2.0",
 		"@modelcontextprotocol/sdk": "^1.29.0",
 		"@valibot/to-json-schema": "^1.6.0",
