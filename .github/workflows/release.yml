@@ -11,6 +11,12 @@ on:
         required: true
         type: string
 
+# Tag pushes are already unique, but two tags landing together would
+# publish concurrently — serialize the whole workflow, never cancel.
+concurrency:
+  group: ${{ github.workflow }}
+  cancel-in-progress: false
+
 jobs:
   release:
     runs-on: ubuntu-latest
