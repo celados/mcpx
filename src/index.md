@@ -33,8 +33,8 @@ mcpx @schema .posthog
 After that, narrow to the specific tool or a short candidate list:
 
 ```bash
-mcpx @schema '.posthog."projects-get"'
-mcpx @schema '.posthog.{"projects-get","alerts-list","alert-create"}'
+mcpx @schema .posthog.projects-get
+mcpx @schema '.posthog.{projects-get,alerts-list,alert-create}'
 ```
 
 Avoid bare `mcpx @schema` unless the user explicitly asks for the complete command

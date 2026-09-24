@@ -61,7 +61,17 @@ export async function discoverServer(
 		}
 	} catch (error) {
 		const message = error instanceof Error ? error.message : String(error)
-		if (discoveredAuth.kind === 'oauth' || discoveredAuth.kind === 'unknown') {
+		// @add never starts OAuth (ADR-0007), so name the one command that does;
+		// the transport error for an unauthenticated POST is empty noise here.
+		if (discoveredAuth.kind === 'oauth') {
+			return {
+				server,
+				status: 'auth-required',
+				message:
+					'Authentication is required before tool schemas can be listed. Run `mcpx @refresh` to authenticate.',
+			}
+		}
+		if (discoveredAuth.kind === 'unknown') {
 			return {
 				server,
 				status: 'auth-required',
