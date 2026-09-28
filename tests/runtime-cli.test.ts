@@ -124,6 +124,10 @@ describe('Runtime CLI adapter lifecycle', () => {
 
 		expect(results.every((result) => result.exitCode === 0)).toBe(true)
 		expect(fixture.tokenRequests()).toBe(1)
+		// Progress is rendered on stderr while the flow runs, not after it.
+		expect(results[0]?.stderr).toContain(
+			'mcpx: controlled: checking credentials',
+		)
 		for (const child of refreshes) expect(isAlive(child.pid)).toBe(false)
 	}, 10_000)
 

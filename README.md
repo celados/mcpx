@@ -174,11 +174,11 @@ mcpx @add '{
 }'
 ```
 
-`@refresh` checks every registered MCP server, repairs OAuth state first,
-refreshes cached tool schemas after auth is ready, and reports servers that
-still require re-authentication. OAuth failures include the server name and do
-not prevent the remaining servers from being checked. It may open a browser for
-interactive OAuth.
+`@refresh` checks registered MCP servers concurrently: it makes each server's
+credentials usable, then refreshes its cached tool schemas. Progress for every
+server (token refresh, browser authorization URL, tool listing, result) is
+printed to stderr as it happens; stdout carries only the final report. A failing
+server is reported by name and does not prevent the others from being checked.
 
 Stdio servers are called through `mcpxd`, a user-local daemon that reuses stdio
 MCP sessions across CLI invocations. `mcpxd` starts on demand, keeps idle stdio
@@ -209,8 +209,19 @@ http://127.0.0.1:65245/callback
 Add and save that exact Redirect URL in the provider app settings before
 continuing the prompt.
 
-When an OAuth token is close to expiry, mcpx refreshes it before calling the MCP
-tool and then continues the original command.
+OAuth credentials repair themselves during ordinary tool calls:
+
+- When a token is close to expiry, mcpx refreshes it silently before the call.
+- When the server rejects a token with 401, mcpx refreshes it and retries the
+  call once.
+- When no refresh is possible (no token yet, or the refresh grant was revoked),
+  the call opens browser authorization, prints the authorization URL to stderr,
+  and waits up to 5 minutes for it to complete before continuing. Concurrent
+  calls for the same server share one authorization.
+
+Providers that need a manual OAuth client can only prompt in an interactive
+terminal; without one, the call fails immediately with `reauth-required` and
+`mcpx @refresh` must be run in a terminal.
 
 Tool calls use a 5 minute request timeout by default. Set
 `MCPX_TOOL_CALL_TIMEOUT_MS` when a remote MCP server legitimately needs longer.

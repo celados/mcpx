@@ -2,10 +2,17 @@ import type { RuntimeCaller } from './runtime-caller'
 
 import { RuntimeOperationError } from './runtime-call'
 
+export type AuthenticationProgress = {
+	phase: 'refreshing-token' | 'awaiting-input' | 'awaiting-browser'
+	message: string
+	url?: string
+}
+
 export type AuthenticationFlow<T> = {
 	start: (
 		signal: AbortSignal,
 		requestInput: RuntimeCaller['requestInput'],
+		report: (progress: AuthenticationProgress) => void,
 	) => Promise<T>
 	persist: (value: T) => Promise<void>
 }
@@ -17,6 +24,7 @@ export type AuthenticationWaiterOutcome =
 type Waiter = {
 	caller: RuntimeCaller
 	unsubscribe: () => void
+	onProgress?: ((progress: AuthenticationProgress) => void) | undefined
 	resolve: (outcome: AuthenticationWaiterOutcome) => void
 	reject: (error: Error) => void
 }
@@ -27,6 +35,7 @@ type ActiveFlow<T> = {
 	timer: Timer
 	finished: boolean
 	flow: AuthenticationFlow<T>
+	progress?: AuthenticationProgress
 	run?: Promise<void>
 }
 
@@ -46,6 +55,7 @@ export class AuthenticationCoordinator {
 		identity: string,
 		caller: RuntimeCaller,
 		flow: AuthenticationFlow<T>,
+		onProgress?: (progress: AuthenticationProgress) => void,
 	): Promise<AuthenticationWaiterOutcome> {
 		if (!this.#accepting) {
 			return Promise.reject(
@@ -65,11 +75,14 @@ export class AuthenticationCoordinator {
 			(resolve, reject) => {
 				const waiter: Waiter = {
 					caller,
+					onProgress,
 					resolve,
 					reject,
 					unsubscribe: () => {},
 				}
 				entry.waiters.set(caller.id, waiter)
+				// Late joiners still need the authorization URL an earlier waiter saw.
+				if (entry.progress) notifyProgress(waiter, entry.progress)
 				const unsubscribe = caller.onDisconnect(() => {
 					this.#removeWaiter(identity, entry, waiter)
 				})
@@ -117,8 +130,15 @@ export class AuthenticationCoordinator {
 	async #runFlow<T>(identity: string, entry: ActiveFlow<T>): Promise<void> {
 		let failure: Error | undefined
 		try {
-			const value = await entry.flow.start(entry.controller.signal, (request) =>
-				this.#requestInput(entry, request),
+			const value = await entry.flow.start(
+				entry.controller.signal,
+				(request) => this.#requestInput(entry, request),
+				(progress) => {
+					if (entry.finished) return
+					entry.progress = progress
+					for (const waiter of entry.waiters.values())
+						notifyProgress(waiter, progress)
+				},
 			)
 			await entry.flow.persist(value)
 		} catch (error) {
@@ -181,6 +201,17 @@ export class AuthenticationCoordinator {
 	}
 }
 
+function notifyProgress(
+	waiter: Waiter,
+	progress: AuthenticationProgress,
+): void {
+	try {
+		waiter.onProgress?.(progress)
+	} catch {
+		// Progress is advisory; a failing renderer must not fail the shared flow.
+	}
+}
+
 class AuthenticationTimeout extends Error {
 	constructor(message: string) {
 		super(message)
@@ -202,6 +233,7 @@ function authenticationError(error: unknown): Error {
 	if (error instanceof AuthenticationCancelled) {
 		return new RuntimeOperationError('cancelled', error.message)
 	}
+	if (error instanceof RuntimeOperationError) return error
 	return new RuntimeOperationError(
 		'operation-failed',
 		error instanceof Error ? error.message : String(error),

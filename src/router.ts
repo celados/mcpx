@@ -18,7 +18,11 @@ import {
 import { toStandardJsonSchema } from '@valibot/to-json-schema'
 import * as v from 'valibot'
 
-import type { RuntimeInputRequest, RuntimeIntent } from './runtime-protocol'
+import type {
+	RuntimeFrame,
+	RuntimeInputRequest,
+	RuntimeIntent,
+} from './runtime-protocol'
 import type { RuntimeRegistrySnapshot } from './runtime-stores'
 import type { RegistryView } from './skill-command'
 import type { RegistryConfig } from './types'
@@ -292,6 +296,7 @@ function buildHandlers(
 							notificationMode: notificationModeFromEnv(),
 						},
 						mainPath,
+						{ onEvent: renderRuntimeProgress, onInput: promptForRuntimeInput },
 					)
 				} catch (error) {
 					throw domainError(
@@ -358,7 +363,7 @@ function buildHandlers(
 			await requestRuntime(
 				{ requestId: crypto.randomUUID(), op: 'refreshServers' },
 				mainPath,
-				{ onInput: promptForRuntimeInput },
+				{ onEvent: renderRuntimeProgress, onInput: promptForRuntimeInput },
 			),
 			options.context,
 		)
@@ -396,6 +401,13 @@ function buildHandlers(
 	}
 
 	return handlers
+}
+
+// Progress goes to stderr so stdout stays the command's machine-readable result.
+function renderRuntimeProgress(frame: RuntimeFrame): void {
+	if (frame.kind !== 'event' || frame.event.type !== 'progress') return
+	if (!frame.event.message) return
+	process.stderr.write(`mcpx: ${frame.event.message}\n`)
 }
 
 async function promptForRuntimeInput(

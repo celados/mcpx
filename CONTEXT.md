@@ -31,7 +31,7 @@ The stable authorization identity shared by every server declaration and call th
 _Avoid_: Server key, access token, session ID
 
 **Authentication Flow**:
-One explicitly requested, shared attempt to make a Credential Identity usable; ordinary Calls report that authentication is required instead of starting the flow.
+One shared attempt to make a Credential Identity usable: a silent token refresh when possible, otherwise browser authorization. Calls and `@refresh` join the same flow and wait for its outcome.
 _Avoid_: Per-command login, token retry
 
 **Caller Input**:

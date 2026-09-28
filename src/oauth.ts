@@ -45,6 +45,7 @@ export async function performOAuthAuthentication(
 	auth: DiscoveredOAuth,
 	signal?: AbortSignal,
 	manualClientProvider?: ManualOAuthClientProvider,
+	onAuthorizationUrl?: (url: string) => void,
 ): Promise<{
 	auth: AuthenticatedOAuth
 	token: OAuthToken
@@ -104,9 +105,9 @@ export async function performOAuthAuthentication(
 			challenge,
 		})
 
-		console.error(
-			`Opening browser for OAuth authentication: ${authorizationUrl}`,
-		)
+		// The Runtime's stderr is detached; callers must receive the URL as an event
+		// so a failed browser launch never turns into a silent wait.
+		onAuthorizationUrl?.(authorizationUrl)
 		openBrowser(authorizationUrl)
 
 		const callbackResult = await callback.result
@@ -286,7 +287,8 @@ export function shouldRefreshOAuthToken(
 ): boolean {
 	if (!token.expiresAt) return false
 	const expiresAt = Date.parse(token.expiresAt)
-	if (!Number.isFinite(expiresAt)) return false
+	// An unreadable expiry cannot prove the token is usable.
+	if (!Number.isFinite(expiresAt)) return true
 	return expiresAt - now.getTime() <= 60_000
 }
 
@@ -298,14 +300,10 @@ export async function refreshOAuthToken(options: {
 	signal?: AbortSignal
 }): Promise<OAuthToken> {
 	if (!options.token.refreshToken) {
-		throw new Error(
-			'OAuth token is expired and has no refresh token. Run mcpx @add again.',
-		)
+		throw new Error('OAuth token has no refresh token.')
 	}
 	if (!options.token.clientId) {
-		throw new Error(
-			'OAuth token is expired and cannot be refreshed because it was created by an older mcpx version. Run mcpx @add again.',
-		)
+		throw new Error('OAuth token has no client_id to refresh with.')
 	}
 	const metadata = await fetchAuthorizationServerMetadata(options.issuer, {
 		signal: options.signal,
@@ -318,7 +316,7 @@ export async function refreshOAuthToken(options: {
 	})
 	const clientSecret = options.clientSecret
 	if (options.token.clientSecretKey && !clientSecret) {
-		throw new Error('OAuth client secret is missing. Run mcpx @add again.')
+		throw new Error('OAuth client secret is missing.')
 	}
 	if (clientSecret) body.set('client_secret', clientSecret)
 

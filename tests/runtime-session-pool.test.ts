@@ -500,7 +500,8 @@ describe('Runtime session pool', () => {
 			...stores,
 			readState: async () => {
 				reads += 1
-				if (reads === 2) {
+				// Reads: server resolution, authorization, then header resolution.
+				if (reads === 3) {
 					headerReadStarted = true
 					await headerReadBlocked
 				}

@@ -3,12 +3,17 @@ import fs from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 
+import type { McpConnection } from '../src/mcp-client'
+import type { RuntimeFrame } from '../src/runtime-protocol'
+import type { RuntimeStores } from '../src/runtime-stores'
+
 import { McpRuntime } from '../src/runtime'
 import { RuntimeAuthentication } from '../src/runtime-authentication'
 import { createInMemoryRuntimeCaller } from '../src/runtime-caller'
+import { RuntimeSessionPool } from '../src/runtime-session-pool'
 import { openRuntimeStores } from '../src/runtime-stores'
 
-describe('Runtime explicit authentication', () => {
+describe('Runtime authentication', () => {
 	const roots: string[] = []
 	const servers: Bun.Server<unknown>[] = []
 
@@ -86,7 +91,9 @@ describe('Runtime explicit authentication', () => {
 		expect((await stores.credentials.read()).oauth[tokenKey]?.accessToken).toBe(
 			'rotated-access',
 		)
-		expect(callers.every((caller) => caller.frames.length === 1)).toBe(true)
+		expect(callers.every((caller) => terminalFrames(caller).length === 1)).toBe(
+			true,
+		)
 	})
 
 	it('keeps an interactive flow for remaining waiters and aborts after the final disconnect', async () => {
@@ -148,11 +155,11 @@ describe('Runtime explicit authentication', () => {
 
 		expect(starts).toBe(1)
 		expect(callbackOpen).toBe(false)
-		expect(first.frames).toEqual([])
-		expect(second.frames).toEqual([])
+		expect(terminalFrames(first)).toEqual([])
+		expect(terminalFrames(second)).toEqual([])
 	})
 
-	it('continues past a failed refresh and attributes the failure to its server', async () => {
+	it('continues past a failed server and attributes the failure to it', async () => {
 		const stores = await createStores(
 			{
 				url: 'http://127.0.0.1:1/broken/mcp',
@@ -194,30 +201,215 @@ describe('Runtime explicit authentication', () => {
 			refreshToken: async ({ resourceUrl }) => {
 				if (resourceUrl.includes('/broken/'))
 					throw new Error('OAuth token refresh failed: invalid_grant')
+				return freshToken('rotated-access', 'working-client')
+			},
+			authenticate: async () => {
+				throw new Error('browser authorization failed')
+			},
+		})
+		const runtime = runtimeWith(stores, authentication, async () => [
+			{ name: 'echo' },
+		])
+		const caller = createInMemoryRuntimeCaller('partial-refresh')
+
+		await runtime.handle(
+			{ requestId: 'partial-refresh', op: 'refreshServers' },
+			caller,
+		)
+
+		expect(terminalFrames(caller)).toEqual([
+			{
+				requestId: 'partial-refresh',
+				kind: 'result',
+				result: {
+					status: 'completed',
+					refreshed: ['working'],
+					failed: [
+						{
+							serverName: 'broken',
+							message:
+								'Credentials for broken must be refreshed: browser authorization failed',
+						},
+					],
+				},
+			},
+		])
+		const messages = progressMessages(caller)
+		expect(messages).toContain('broken: refreshing OAuth token')
+		expect(messages).toContain(
+			'broken: token refresh failed (OAuth token refresh failed: invalid_grant); starting browser authorization',
+		)
+		expect(messages).toContain('working: ok (1 tool)')
+		const state = await stores.readState()
+		expect(state.schemas.servers.broken?.refreshStatus).toMatchObject({
+			status: 'reauth-required',
+		})
+		expect(state.schemas.servers.working?.refreshStatus).toMatchObject({
+			status: 'ok',
+		})
+	})
+
+	it('silently refreshes an expiring token before an ordinary Call', async () => {
+		const stores = await createStores(oauthTokenServer(), {
+			[TOKEN_KEY]: expiredToken(),
+		})
+		let refreshes = 0
+		const authorizations: (string | undefined)[] = []
+		const authentication = new RuntimeAuthentication(stores, {
+			refreshToken: async () => {
+				refreshes += 1
+				return freshToken('rotated-access')
+			},
+			authenticate: async () => {
+				throw new Error('must not open a browser')
+			},
+		})
+		const runtime = runtimeWith(stores, authentication, undefined, {
+			onConnect: (headers) => authorizations.push(headers?.Authorization),
+		})
+		const caller = createInMemoryRuntimeCaller('call')
+
+		await runtime.handle(callIntent('call'), caller)
+
+		expect(refreshes).toBe(1)
+		expect(authorizations).toEqual(['Bearer rotated-access'])
+		expect(terminalFrames(caller)[0]).toMatchObject({ kind: 'result' })
+		expect(progressMessages(caller)).toEqual([
+			'fixture: refreshing OAuth token',
+		])
+	})
+
+	it('replaces a rejected credential and retries the Call once', async () => {
+		const stores = await createStores(oauthTokenServer(), {
+			[TOKEN_KEY]: freshToken('revoked-access'),
+		})
+		let refreshes = 0
+		const authentication = new RuntimeAuthentication(stores, {
+			refreshToken: async () => {
+				refreshes += 1
+				return freshToken('rotated-access')
+			},
+		})
+		const attempts: (string | undefined)[] = []
+		const runtime = runtimeWith(stores, authentication, undefined, {
+			onConnect: (headers) => attempts.push(headers?.Authorization),
+			callTool: async (headers) => {
+				if (headers?.Authorization === 'Bearer revoked-access')
+					throw Object.assign(new Error('Unauthorized'), { code: 401 })
+				return 'ok'
+			},
+		})
+		const caller = createInMemoryRuntimeCaller('call')
+
+		await runtime.handle(callIntent('call'), caller)
+
+		expect(refreshes).toBe(1)
+		expect(attempts).toEqual(['Bearer revoked-access', 'Bearer rotated-access'])
+		expect(terminalFrames(caller)).toEqual([
+			{
+				requestId: 'call',
+				kind: 'result',
+				result: { result: 'ok', notifications: [], toolsChanged: false },
+			},
+		])
+	})
+
+	it('holds a Call until browser authorization completes and reports the URL', async () => {
+		const stores = await createStores({
+			url: 'http://127.0.0.1:1/mcp',
+			auth: {
+				kind: 'oauth',
+				confidence: 'confirmed',
+				authorizationServers: ['http://127.0.0.1:1'],
+			},
+		})
+		let approve = () => {}
+		const authentication = new RuntimeAuthentication(stores, {
+			authenticate: async (_name, _url, _auth, _signal, _manual, onUrl) => {
+				onUrl?.('http://127.0.0.1:1/authorize?state=fixture')
+				await new Promise<void>((resolve) => {
+					approve = resolve
+				})
 				return {
-					accessToken: 'rotated-access',
-					refreshToken: 'rotated-refresh',
-					clientId: 'working-client',
-					tokenType: 'bearer',
-					expiresAt: '2000-01-01T01:00:00.000Z',
+					auth: {
+						kind: 'oauth-token',
+						tokenKey: TOKEN_KEY,
+						confidence: 'confirmed',
+					},
+					token: freshToken('browser-access'),
 				}
 			},
 		})
-		const caller = createInMemoryRuntimeCaller('partial-refresh')
-
-		const outcome = await authentication.refreshServers(undefined, caller)
-
-		expect(outcome).toEqual({
-			status: 'completed',
-			refreshed: ['working'],
-			failed: [
-				{
-					serverName: 'broken',
-					message:
-						'Failed to refresh broken: OAuth token refresh failed: invalid_grant',
-				},
-			],
+		const authorizations: (string | undefined)[] = []
+		const runtime = runtimeWith(stores, authentication, undefined, {
+			onConnect: (headers) => authorizations.push(headers?.Authorization),
 		})
+		const first = createInMemoryRuntimeCaller('first')
+		const late = createInMemoryRuntimeCaller('late')
+
+		const firstRun = runtime.handle(callIntent('first'), first)
+		await waitFor(() => progressMessages(first).length > 0)
+		const lateRun = runtime.handle(callIntent('late'), late)
+		await waitFor(() => progressMessages(late).length > 0)
+		expect(terminalFrames(first)).toEqual([])
+		approve()
+		await Promise.all([firstRun, lateRun])
+
+		const expected =
+			'fixture: authorize in your browser (waiting up to 5 minutes): http://127.0.0.1:1/authorize?state=fixture'
+		// The late Call joined after the URL was issued and still receives it.
+		expect(progressMessages(first)).toEqual([expected])
+		expect(progressMessages(late)).toEqual([expected])
+		expect(terminalFrames(first)[0]).toMatchObject({ kind: 'result' })
+		expect(terminalFrames(late)[0]).toMatchObject({ kind: 'result' })
+		expect(authorizations).toEqual(['Bearer browser-access'])
+		expect((await stores.readState()).registry.servers.fixture).toMatchObject({
+			auth: { kind: 'oauth-token', tokenKey: TOKEN_KEY },
+		})
+	})
+
+	it('fails fast when manual OAuth client input has no terminal', async () => {
+		const stores = await createStores({
+			url: 'http://127.0.0.1:1/mcp',
+			auth: {
+				kind: 'oauth',
+				confidence: 'confirmed',
+				authorizationServers: ['http://127.0.0.1:1'],
+			},
+		})
+		const authentication = new RuntimeAuthentication(stores, {
+			authenticate: async (_name, _url, _auth, _signal, manualClient) => {
+				await manualClient?.({
+					serverName: 'fixture',
+					redirectUri: 'http://127.0.0.1:65245/callback',
+					issuer: 'http://127.0.0.1:1',
+					scopes: [],
+				})
+				throw new Error('unreachable')
+			},
+		})
+		const runtime = runtimeWith(stores, authentication)
+		const caller = {
+			...createInMemoryRuntimeCaller('agent'),
+			requestInput: async () => ({
+				cancelled: true,
+				reason: 'Interactive terminal required.',
+			}),
+		}
+
+		await runtime.handle(callIntent('agent'), caller)
+
+		expect(terminalFrames(caller)).toEqual([
+			{
+				requestId: 'agent',
+				kind: 'error',
+				error: {
+					code: 'reauth-required',
+					message:
+						'Credentials for fixture must be refreshed: OAuth client credentials must be entered interactively (Interactive terminal required.). Run mcpx @refresh in a terminal',
+				},
+			},
+		])
 	})
 
 	it('requests manual OAuth client input from the CLI caller and persists it in Runtime state', async () => {
@@ -334,18 +526,15 @@ describe('Runtime explicit authentication', () => {
 				return { clientId: 'survivor', clientSecret: 'local-secret' }
 			},
 		}
-		const firstRun = authentication.refreshServers(['fixture'], first)
-		const secondRun = authentication.refreshServers(['fixture'], second)
+		const firstRun = authentication.authorize('fixture', first)
+		const secondRun = authentication.authorize('fixture', second)
 		await waitFor(() => firstPrompted)
 
 		firstBase.disconnect()
 		const outcomes = await Promise.all([firstRun, secondRun])
 
 		expect(secondPrompted).toBe(true)
-		expect(outcomes).toEqual([
-			{ status: 'disconnected' },
-			{ status: 'completed', refreshed: ['fixture'], failed: [] },
-		])
+		expect(outcomes).toEqual(['disconnected', 'ready'])
 	})
 
 	async function createStores(
@@ -366,6 +555,91 @@ describe('Runtime explicit authentication', () => {
 		return openRuntimeStores(root)
 	}
 })
+
+const TOKEN_KEY = 'fixture:http://127.0.0.1:1'
+
+function oauthTokenServer() {
+	return {
+		url: 'http://127.0.0.1:1/mcp',
+		auth: { kind: 'oauth-token', tokenKey: TOKEN_KEY, confidence: 'confirmed' },
+	}
+}
+
+function expiredToken() {
+	return {
+		accessToken: 'expired-access',
+		refreshToken: 'refresh-1',
+		clientId: 'fixture-client',
+		tokenType: 'bearer',
+		expiresAt: '2000-01-01T00:00:00.000Z',
+	}
+}
+
+function freshToken(accessToken: string, clientId = 'fixture-client') {
+	return {
+		accessToken,
+		refreshToken: 'refresh-2',
+		clientId,
+		tokenType: 'bearer',
+		expiresAt: new Date(Date.now() + 3_600_000).toISOString(),
+	}
+}
+
+function callIntent(requestId: string) {
+	return {
+		requestId,
+		op: 'call' as const,
+		serverName: 'fixture',
+		toolName: 'echo',
+		input: {},
+	}
+}
+
+function runtimeWith(
+	stores: RuntimeStores,
+	authentication: RuntimeAuthentication,
+	listTools: () => Promise<unknown[]> = async () => [],
+	options: {
+		onConnect?: (headers: Record<string, string> | undefined) => void
+		callTool?: (headers: Record<string, string> | undefined) => Promise<unknown>
+	} = {},
+): McpRuntime {
+	const sessions = new RuntimeSessionPool(stores, {
+		authentication,
+		connect: async (_server, connectOptions) => {
+			const headers = connectOptions?.headers
+			options.onConnect?.(headers)
+			const connection: McpConnection = {
+				client: {
+					callTool: async () =>
+						(options.callTool ?? (async () => 'ok'))(headers),
+					listTools: async () => ({ tools: await listTools() }),
+				} as unknown as McpConnection['client'],
+				close: async () => {},
+				pid: () => null,
+				stderr: null,
+				sessionId: () => undefined,
+				updateHeaders: () => {},
+			}
+			return connection
+		},
+	})
+	return new McpRuntime(stores, { authentication, sessions })
+}
+
+function terminalFrames(caller: { frames: RuntimeFrame[] }): RuntimeFrame[] {
+	return caller.frames.filter((frame) => frame.kind !== 'event')
+}
+
+function progressMessages(caller: { frames: RuntimeFrame[] }): string[] {
+	return caller.frames.flatMap((frame) =>
+		frame.kind === 'event' &&
+		frame.event.type === 'progress' &&
+		!/: (checking credentials|listing tools)$/.test(frame.event.message ?? '')
+			? [frame.event.message ?? '']
+			: [],
+	)
+}
 
 async function waitFor(predicate: () => boolean): Promise<void> {
 	for (let attempt = 0; attempt < 100; attempt += 1) {

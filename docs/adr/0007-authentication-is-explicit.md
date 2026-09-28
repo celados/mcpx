@@ -1,7 +1,7 @@
 ---
 type: Decision
 title: Authentication Is Explicit
-status: accepted
+status: superseded by 0008
 ---
 
 # Authentication Is Explicit

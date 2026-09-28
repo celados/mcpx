@@ -1,6 +1,6 @@
 {
 	"name": "mcpx",
-	"version": "0.12.4",
+	"version": "0.13.0",
 	"license": "MIT",
 	"bin": {
 		"mcpx": "./src/main.ts"

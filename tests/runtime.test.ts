@@ -4,6 +4,7 @@ import { tmpdir } from 'node:os'
 import path from 'node:path'
 
 import { McpRuntime } from '../src/runtime'
+import { RuntimeAuthentication } from '../src/runtime-authentication'
 import { createInMemoryRuntimeCaller } from '../src/runtime-caller'
 import { openRuntimeStores } from '../src/runtime-stores'
 
@@ -38,17 +39,24 @@ describe('MCP Runtime', () => {
 		expect(JSON.stringify(caller.frames)).not.toContain('secret')
 	})
 
-	it('returns reauth-required without attempting an ordinary OAuth flow', async () => {
-		const runtime = new McpRuntime(
-			await storesFor({
-				url: 'http://127.0.0.1:1/mcp',
-				auth: {
-					kind: 'oauth-token',
-					tokenKey: 'fixture:http://127.0.0.1:1',
-					confidence: 'confirmed',
+	it('returns reauth-required when the Call cannot be authorized', async () => {
+		const stores = await storesFor({
+			url: 'http://127.0.0.1:1/mcp',
+			auth: {
+				kind: 'oauth-token',
+				tokenKey: 'fixture:http://127.0.0.1:1',
+				confidence: 'confirmed',
+			},
+		})
+		let authorizationServer: string | undefined
+		const runtime = new McpRuntime(stores, {
+			authentication: new RuntimeAuthentication(stores, {
+				authenticate: async (_name, _url, auth) => {
+					authorizationServer = auth.authorizationServers?.[0]
+					throw new Error('browser unavailable')
 				},
 			}),
-		)
+		})
 		const caller = createInMemoryRuntimeCaller('call')
 
 		await runtime.handle(
@@ -68,10 +76,13 @@ describe('MCP Runtime', () => {
 				kind: 'error',
 				error: {
 					code: 'reauth-required',
-					message: 'Credentials for fixture must be refreshed.',
+					message:
+						'Credentials for fixture must be refreshed: browser unavailable',
 				},
 			},
 		])
+		// A missing token falls back to browser authorization at the token issuer.
+		expect(authorizationServer).toBe('http://127.0.0.1:1')
 	})
 
 	async function storesFor(server: Record<string, unknown>) {

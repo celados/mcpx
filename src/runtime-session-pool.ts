@@ -17,6 +17,12 @@ import {
 	createNotificationBuffer,
 	flushNotificationBuffer,
 } from './notifications'
+import { shouldRefreshOAuthToken } from './oauth'
+import {
+	progressEvent,
+	reauthRequired,
+	RuntimeAuthentication,
+} from './runtime-authentication'
 import {
 	CancelableFifo,
 	RuntimeCall,
@@ -68,13 +74,22 @@ export type RuntimeSessionStatus = {
 export class RuntimeSessionPool {
 	readonly #stores: RuntimeStores
 	readonly #connect: Connect
+	readonly #authentication: RuntimeAuthentication
 	readonly #sessions = new Map<string, ManagedRuntimeSession>()
 	readonly #bearerCursors = new Map<string, number>()
 	#accepting = true
 
-	constructor(stores: RuntimeStores, options: { connect?: Connect } = {}) {
+	constructor(
+		stores: RuntimeStores,
+		options: {
+			connect?: Connect
+			authentication?: RuntimeAuthentication
+		} = {},
+	) {
 		this.#stores = stores
 		this.#connect = options.connect ?? connectMcpClient
+		this.#authentication =
+			options.authentication ?? new RuntimeAuthentication(stores)
 	}
 
 	async call(call: RuntimeCall, input: RuntimeCallInput): Promise<void> {
@@ -82,74 +97,18 @@ export class RuntimeSessionPool {
 			throw new RuntimeOperationError('cancelled', 'MCP Runtime is stopping.')
 		}
 		const resolved = await this.#resolveServer(input.serverName)
+		// Waiting for authorization happens before queueing so it neither consumes
+		// the tool timeout nor blocks unrelated work queued on this session.
+		if ((await this.#authorize(input.serverName, call)) === 'disconnected')
+			return
+		if (call.state === 'terminal') return
 		this.#assertAccepting()
 		const session = this.#sessionFor(input.serverName, resolved)
-		session.queue.enqueue(call, async (signal) => {
-			const headers = await this.#resolveHeaders(input.serverName)
-			signal.throwIfAborted()
-			if (session.closing) {
-				throw new RuntimeOperationError(
-					'cancelled',
-					'MCP Runtime session is closing.',
-				)
-			}
-			const buffer = createNotificationBuffer()
-			const requestOptions = toolCallRequestOptions()
-			if (input.notificationMode !== 'discard') {
-				requestOptions.onprogress = (progress) => {
-					buffer.add({
-						method: 'notifications/progress',
-						params: { progressToken: call.id, ...progress },
-					})
-				}
-			}
-			const timeout = setTimeout(() => {
-				void call.cancel('timeout')
-			}, requestOptions.timeout)
-			timeout.unref()
-			session.currentBuffer =
-				input.notificationMode === 'discard' ? undefined : buffer
-			try {
-				const connection = await this.#ensureConnected(session, headers)
-				const result = await connection.client.callTool(
-					{ name: input.toolName, arguments: input.input },
-					undefined,
-					{ ...requestOptions, signal },
-				)
-				const notifications = await flushNotificationBuffer(buffer)
-				const toolsChanged =
-					buffer.toolsChanged() || session.pendingToolsChanged
-				session.pendingToolsChanged = false
-				if (toolsChanged) {
-					const tools = await listAllMcpTools(connection.client)
-					await this.#stores.updateState((state) => {
-						state.schemas.servers[input.serverName] = {
-							tools: withCommandNames(tools),
-							discoveredAt: new Date().toISOString(),
-							refreshStatus: {
-								checkedAt: new Date().toISOString(),
-								status: 'ok',
-							},
-						}
-					})
-				}
-				return { result, notifications, toolsChanged }
-			} catch (error) {
-				if (isUnauthorizedError(error)) {
-					session.evictCount += 1
-					await this.#closeSession(session, false)
-					throw new RuntimeOperationError(
-						'reauth-required',
-						`Credentials for ${input.serverName} must be refreshed.`,
-					)
-				}
-				throw error
-			} finally {
-				clearTimeout(timeout)
-				delete session.currentBuffer
-				session.lastUsedAt = Date.now()
-			}
-		})
+		session.queue.enqueue(call, (signal) =>
+			this.#runAuthorized(session, input.serverName, call, signal, (headers) =>
+				this.#callTool(session, call, input, headers, signal),
+			),
+		)
 		await call.settled
 	}
 
@@ -161,17 +120,83 @@ export class RuntimeSessionPool {
 		const resolved = await this.#resolveServer(serverName)
 		this.#assertAccepting()
 		const session = this.#sessionFor(serverName, resolved)
-		let tools: Awaited<ReturnType<typeof listAllMcpTools>> = []
+		let tools: Awaited<ReturnType<typeof listAllMcpTools>> | undefined
+		let failure: RuntimeOperationError | undefined
 		const childCaller: RuntimeCaller = {
 			id: `${caller.id}:schema:${serverName}`,
 			onDisconnect: caller.onDisconnect,
 			requestInput: caller.requestInput,
 			send: async (frame) => {
 				if (frame.kind === 'result') tools = frame.result as typeof tools
+				else if (frame.kind === 'error')
+					failure = new RuntimeOperationError(
+						frame.error.code,
+						frame.error.message,
+					)
+				else await caller.send({ ...frame, requestId: caller.id })
 			},
 		}
 		const call = new RuntimeCall(childCaller)
-		session.queue.enqueue(call, async (signal) => {
+		session.queue.enqueue(call, (signal) =>
+			this.#runAuthorized(
+				session,
+				serverName,
+				call,
+				signal,
+				async (headers) => {
+					const timeout = setTimeout(() => {
+						void call.cancel('timeout')
+					}, toolCallRequestOptions().timeout)
+					timeout.unref()
+					try {
+						return await listAllMcpTools(
+							(await this.#ensureConnected(session, headers)).client,
+						)
+					} finally {
+						clearTimeout(timeout)
+						session.lastUsedAt = Date.now()
+					}
+				},
+			),
+		)
+		await call.settled
+		if (failure) throw failure
+		if (!tools) {
+			throw new RuntimeOperationError(
+				call.cancellationCause === 'timeout' ? 'timeout' : 'cancelled',
+				call.cancellationCause === 'timeout'
+					? `Listing tools for ${serverName} timed out.`
+					: `Listing tools for ${serverName} was cancelled.`,
+			)
+		}
+		return tools
+	}
+
+	#authorize(
+		serverName: string,
+		call: RuntimeCall,
+		rejected = false,
+	): ReturnType<RuntimeAuthentication['authorize']> {
+		return this.#authentication.authorize(serverName, call.caller, {
+			rejected,
+			signal: call.signal,
+			onProgress: (progress) => call.emit(progressEvent(progress)),
+		})
+	}
+
+	/**
+	 * Runs one attempt with the current credential. A 401 means the server never
+	 * executed the request, so it is safe to replace the credential and retry
+	 * once.
+	 */
+	async #runAuthorized<T>(
+		session: ManagedRuntimeSession,
+		serverName: string,
+		call: RuntimeCall,
+		signal: AbortSignal,
+		run: (headers: Record<string, string> | undefined) => Promise<T>,
+	): Promise<T> {
+		for (let retried = false; ; retried = true) {
 			const headers = await this.#resolveHeaders(serverName)
 			signal.throwIfAborted()
 			if (session.closing) {
@@ -180,12 +205,72 @@ export class RuntimeSessionPool {
 					'MCP Runtime session is closing.',
 				)
 			}
-			return listAllMcpTools(
-				(await this.#ensureConnected(session, headers)).client,
+			try {
+				return await run(headers)
+			} catch (error) {
+				if (!isUnauthorizedError(error)) throw error
+				session.evictCount += 1
+				await this.#closeSession(session, false)
+				if (retried) throw reauthRequired(serverName)
+			}
+			if ((await this.#authorize(serverName, call, true)) === 'disconnected')
+				throw new RuntimeOperationError('cancelled', 'Runtime caller left.')
+			signal.throwIfAborted()
+		}
+	}
+
+	async #callTool(
+		session: ManagedRuntimeSession,
+		call: RuntimeCall,
+		input: RuntimeCallInput,
+		headers: Record<string, string> | undefined,
+		signal: AbortSignal,
+	) {
+		const buffer = createNotificationBuffer()
+		const requestOptions = toolCallRequestOptions()
+		if (input.notificationMode !== 'discard') {
+			requestOptions.onprogress = (progress) => {
+				buffer.add({
+					method: 'notifications/progress',
+					params: { progressToken: call.id, ...progress },
+				})
+			}
+		}
+		const timeout = setTimeout(() => {
+			void call.cancel('timeout')
+		}, requestOptions.timeout)
+		timeout.unref()
+		session.currentBuffer =
+			input.notificationMode === 'discard' ? undefined : buffer
+		try {
+			const connection = await this.#ensureConnected(session, headers)
+			const result = await connection.client.callTool(
+				{ name: input.toolName, arguments: input.input },
+				undefined,
+				{ ...requestOptions, signal },
 			)
-		})
-		await call.settled
-		return tools
+			const notifications = await flushNotificationBuffer(buffer)
+			const toolsChanged = buffer.toolsChanged() || session.pendingToolsChanged
+			session.pendingToolsChanged = false
+			if (toolsChanged) {
+				const tools = await listAllMcpTools(connection.client)
+				await this.#stores.updateState((state) => {
+					state.schemas.servers[input.serverName] = {
+						tools: withCommandNames(tools),
+						discoveredAt: new Date().toISOString(),
+						refreshStatus: {
+							checkedAt: new Date().toISOString(),
+							status: 'ok',
+						},
+					}
+				})
+			}
+			return { result, notifications, toolsChanged }
+		} finally {
+			clearTimeout(timeout)
+			delete session.currentBuffer
+			session.lastUsedAt = Date.now()
+		}
 	}
 
 	status(): RuntimeSessionStatus[] {
@@ -306,7 +391,9 @@ export class RuntimeSessionPool {
 				: `Bearer ${value}`
 		} else if (declared.auth.kind === 'oauth-token') {
 			const token = credentials.oauth[declared.auth.tokenKey]
-			if (!token || oauthTokenIsUnusable(token.expiresAt)) {
+			// Authorization already ran before queueing; this only catches a credential
+			// that expired or vanished while the Call waited for its turn.
+			if (!token || shouldRefreshOAuthToken(token)) {
 				throw reauthRequired(serverName)
 			}
 			headers.Authorization = `${normalizeAuthScheme(token.tokenType)} ${token.accessToken}`
@@ -433,24 +520,14 @@ function sortValue(value: unknown): unknown {
 	)
 }
 
-function oauthTokenIsUnusable(expiresAt: string | undefined): boolean {
-	if (!expiresAt) return false
-	const expiresAtMs = Date.parse(expiresAt)
-	return !Number.isFinite(expiresAtMs) || expiresAtMs <= Date.now() + 60_000
-}
-
-function reauthRequired(serverName: string): RuntimeOperationError {
-	return new RuntimeOperationError(
-		'reauth-required',
-		`Credentials for ${serverName} must be refreshed.`,
-	)
-}
-
 function isUnauthorizedError(error: unknown): boolean {
+	if (error instanceof RuntimeOperationError) return false
+	if (error instanceof Error) {
+		const code = (error as { code?: unknown }).code
+		if (code === 401 || error.name === 'UnauthorizedError') return true
+	}
 	const message = error instanceof Error ? error.message : String(error)
-	return (
-		message.includes('401') || message.toLowerCase().includes('unauthorized')
-	)
+	return /\b401\b/.test(message) || /unauthorized/i.test(message)
 }
 
 function withCommandNames(tools: McpTool[]): ToolDefinition[] {

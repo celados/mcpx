@@ -266,15 +266,17 @@ Run only the \`@add\` command for a server that is absent.
 ${sections.join('\n')}
 ## Authenticate
 
-An ordinary \`mcpx <server>.<tool>\` call never starts login. If credentials
-are missing or expired:
+An ordinary \`mcpx <server>.<tool>\` call refreshes expired OAuth tokens itself.
+When browser authorization is needed, the call prints the authorization URL to
+stderr and waits up to 5 minutes; share that URL with the user and let the call
+finish. If a call still returns \`reauth-required\` (for example, a provider
+that needs a manual OAuth client and no terminal is available), run:
 
 \`\`\`bash
 mcpx @refresh
 \`\`\`
 
-\`@refresh\` may open a browser or prompt for an OAuth client. If the current
-session is not a TTY, ask the user to run it in their terminal.
+If the current session is not a TTY, ask the user to run it in their terminal.
 
 Once \`mcpx\` lists the server and a focused \`@schema\` call succeeds, return
 to the skill.

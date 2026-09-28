@@ -1,5 +1,9 @@
 import type { RuntimeCaller } from './runtime-caller'
-import type { RuntimeError, RuntimeFrame } from './runtime-protocol'
+import type {
+	RuntimeError,
+	RuntimeEvent,
+	RuntimeFrame,
+} from './runtime-protocol'
 
 export type RuntimeCallState = 'accepted' | 'queued' | 'active' | 'terminal'
 export type CallCancellationCause =
@@ -51,6 +55,10 @@ export class RuntimeCall {
 
 	get id(): string {
 		return this.#caller.id
+	}
+
+	get caller(): RuntimeCaller {
+		return this.#caller
 	}
 
 	get state(): RuntimeCallState {
@@ -118,6 +126,17 @@ export class RuntimeCall {
 						}
 					: undefined
 		await this.#finish({ cause, abort: true, frame })
+	}
+
+	/**
+	 * Reports non-terminal progress; delivery is best-effort and never ends the
+	 * Call.
+	 */
+	emit(event: RuntimeEvent): void {
+		if (this.#state === 'terminal' || !this.#callerConnected) return
+		void this.#caller
+			.send({ requestId: this.id, kind: 'event', event })
+			.catch(() => {})
 	}
 
 	async fail(error: RuntimeError): Promise<void> {
