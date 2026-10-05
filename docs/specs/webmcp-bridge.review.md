@@ -176,7 +176,7 @@ mitigation” (`webmcp-bridge.md:38-39`), but live `info` writes nothing
 storage class, or verb exists. ADR-0003 does not ban persisted observed state;
 it requires declarations, rebuildable schema knowledge, durable operational
 state, and active state to remain separate
-(`docs/adr/0003-separate-declared-and-observed-state.md:9`, `CONTEXT.md:45-55`).
+(`docs/adr/0003-separate-declared-and-observed-state.md:9`, `GLOSSARY.md:45-55`).
 
 **Suggested change:** For v0.1, remove the Gap B mitigation claim and say there
 is no historical surface. If history is retained in scope, define it as a

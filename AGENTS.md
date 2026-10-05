@@ -12,4 +12,4 @@ Use the canonical triage labels defined in `docs/agents/triage-labels.md`.
 
 ### Domain docs
 
-This is a single-context repository. Read `CONTEXT.md` and relevant ADRs under `docs/adr/`. See `docs/agents/domain.md`.
+This is a single-context repository. Read `GLOSSARY.md` and relevant ADRs under `docs/adr/`. See `docs/agents/domain.md`.
