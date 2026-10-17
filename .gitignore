@@ -1,5 +1,5 @@
 node_modules
-.agents/
+.claude/
 .scratch/
 .DS_Store
 dist
