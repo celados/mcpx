@@ -173,7 +173,7 @@ For temporary agent guidance without writing `.agents/skills`, print a
 single-server skill to stdout:
 
 ```bash
-mcpx @skill-install "{ show: 'slack' }"
+mcpx @skill-install "{ show: 'sentry' }"
 ```
 
 Use this when the user asks for a one-off service action during the current

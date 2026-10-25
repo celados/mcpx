@@ -197,18 +197,6 @@ describe('oauth', () => {
 		expect(flow.grant?.tokens?.value.access_token).toBe('access-1')
 	})
 
-	it('accepts a Slack token response that nests the user token', async () => {
-		const fixture = serveAuthorizationServer({ slackTokens: true })
-		const flow = flowOptions(fixture)
-
-		await authorizeOAuth(flow.options)
-
-		expect(flow.grant?.tokens?.value).toMatchObject({
-			access_token: 'xoxp-user',
-			token_type: 'user',
-		})
-	})
-
 	it('refuses an authorization response from another issuer', async () => {
 		const fixture = serveAuthorizationServer({ callbackIssuer: 'https://evil' })
 		const flow = flowOptions(fixture)
@@ -221,7 +209,6 @@ describe('oauth', () => {
 	type FixtureOptions = {
 		registration?: boolean
 		rejectRefresh?: boolean
-		slackTokens?: boolean
 		callbackIssuer?: string
 	}
 
@@ -297,14 +284,6 @@ describe('oauth', () => {
 									{ status: 400 },
 								)
 						}
-						if (options.slackTokens)
-							return Response.json({
-								ok: true,
-								authed_user: {
-									access_token: 'xoxp-user',
-									token_type: 'user',
-								},
-							})
 						return Response.json({
 							access_token: 'access-1',
 							refresh_token: 'refresh-1',

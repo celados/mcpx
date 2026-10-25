@@ -201,8 +201,7 @@ challenged.
 For OAuth servers that support dynamic client registration, mcpx registers a
 client automatically for each browser sign-in.
 
-For OAuth servers that do not support dynamic client registration, such as
-Slack, mcpx prompts for a manual `client_id` and `client_secret`. These providers
+For OAuth servers that do not support dynamic client registration, mcpx prompts for a manual `client_id` and `client_secret`. These providers
 usually require a preconfigured redirect URL. mcpx uses:
 
 ```text
@@ -274,7 +273,7 @@ For temporary agent guidance without writing `.agents/skills`, print a one-serve
 skill to stdout:
 
 ```bash
-mcpx @skill-install "{ show: 'slack' }"
+mcpx @skill-install "{ show: 'sentry' }"
 ```
 
 ## Skill

@@ -46,11 +46,11 @@ describe('Runtime state stores', () => {
 						command: 'fixture-command',
 						env: { FIXTURE_SECRET: 'stdio-secret' },
 					},
-					slack: {
-						url: 'https://slack.example/mcp',
+					manual: {
+						url: 'https://manual.example/mcp',
 						auth: {
 							kind: 'oauth-token',
-							tokenKey: 'slack:https://slack.example',
+							tokenKey: 'manual:https://manual.example',
 							confidence: 'confirmed',
 						},
 					},
@@ -66,17 +66,17 @@ describe('Runtime state stores', () => {
 			JSON.stringify({
 				version: 1,
 				oauth: {
-					'slack:https://slack.example': {
+					'manual:https://manual.example': {
 						accessToken: 'oauth-secret',
 						tokenType: 'user',
-						clientId: 'slack-client',
-						clientSecretKey: 'oauth-client:slack-client',
+						clientId: 'manual-client',
+						clientSecretKey: 'oauth-client:manual-client',
 						refreshToken: 'refresh-secret',
 						expiresAt: '2026-08-03T00:00:00.000Z',
 					},
 					'orphan:issuer': { accessToken: 'orphan', tokenType: 'bearer' },
 				},
-				oauthClientSecrets: { 'oauth-client:slack-client': 'client-secret' },
+				oauthClientSecrets: { 'oauth-client:manual-client': 'client-secret' },
 			}),
 		)
 
@@ -98,19 +98,19 @@ describe('Runtime state stores', () => {
 					},
 				},
 				stdio: { transport: 'stdio', command: 'fixture-command' },
-				slack: { url: 'https://slack.example/mcp', auth: { kind: 'oauth' } },
+				manual: { url: 'https://manual.example/mcp', auth: { kind: 'oauth' } },
 				guessed: { url: 'https://guessed.example/mcp', auth: { kind: 'none' } },
 			},
 		})
 		expect(await stores.credentials.read()).toEqual({
 			version: 3,
 			oauth: {
-				slack: {
+				manual: {
 					client: {
 						registration: 'manual',
 						redirectUri: 'http://127.0.0.1:65245/callback',
 						information: {
-							client_id: 'slack-client',
+							client_id: 'manual-client',
 							client_secret: 'client-secret',
 						},
 					},

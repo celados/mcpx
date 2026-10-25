@@ -391,38 +391,13 @@ function issuersMatch(
 	return stored.replace(/\/$/, '') === current.replace(/\/$/, '')
 }
 
-/**
- * Binds every OAuth request to the flow's lifetime and accepts Slack's token
- * response, which nests a user token under `authed_user`.
- */
+/** Binds every OAuth request to the flow's lifetime. */
 function oauthFetch(signal: AbortSignal): FetchLike {
-	return async (url, init) => {
-		const response = await fetch(url, {
+	return (url, init) =>
+		fetch(url, {
 			...init,
 			signal: init?.signal ? AbortSignal.any([init.signal, signal]) : signal,
 		})
-		if (
-			!(init?.body instanceof URLSearchParams) ||
-			!init.body.has('grant_type')
-		)
-			return response
-		return unwrapAuthedUser(response)
-	}
-}
-
-async function unwrapAuthedUser(response: Response): Promise<Response> {
-	if (!response.headers.get('content-type')?.includes('json')) return response
-	const body = (await response
-		.clone()
-		.json()
-		.catch(() => undefined)) as Record<string, unknown> | undefined
-	const user = body?.authed_user as Record<string, unknown> | undefined
-	if (!body || body.access_token || typeof user?.access_token !== 'string')
-		return response
-	return Response.json(user, {
-		status: response.status,
-		statusText: response.statusText,
-	})
 }
 
 /** The loopback redirect target for one browser authorization. */

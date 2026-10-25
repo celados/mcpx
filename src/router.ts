@@ -198,7 +198,7 @@ function buildRouter(registry: RegistryView): Router {
 				examples: [
 					'mcpx @skill-install',
 					`mcpx @skill-install "{ servers: 'posthog,sentry' }"`,
-					`mcpx @skill-install "{ show: 'slack' }"`,
+					`mcpx @skill-install "{ show: 'sentry' }"`,
 				],
 			})
 			.input(skillInput),
