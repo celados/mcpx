@@ -48,11 +48,11 @@ describe('MCP Runtime', () => {
 				confidence: 'confirmed',
 			},
 		})
-		let authorizationServer: string | undefined
+		let serverUrl: string | undefined
 		const runtime = new McpRuntime(stores, {
 			authentication: new RuntimeAuthentication(stores, {
-				authenticate: async (_name, _url, auth) => {
-					authorizationServer = auth.authorizationServers?.[0]
+				authorizeOAuth: async (options) => {
+					serverUrl = options.serverUrl.toString()
 					throw new Error('browser unavailable')
 				},
 			}),
@@ -81,8 +81,8 @@ describe('MCP Runtime', () => {
 				},
 			},
 		])
-		// A missing token falls back to browser authorization at the token issuer.
-		expect(authorizationServer).toBe('http://127.0.0.1:1')
+		// A migrated declaration without a token still authorizes its server.
+		expect(serverUrl).toBe('http://127.0.0.1:1/mcp')
 	})
 
 	async function storesFor(server: Record<string, unknown>) {

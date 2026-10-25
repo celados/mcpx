@@ -267,7 +267,8 @@ ${sections.join('\n')}
 ## Authenticate
 
 An ordinary \`mcpx <server>.<tool>\` call refreshes expired OAuth tokens itself.
-When browser authorization is needed, the call prints the authorization URL to
+When browser authorization is needed — including the first call to a protected
+tool on a server that lists its tools anonymously — the call prints the authorization URL to
 stderr and waits up to 5 minutes; share that URL with the user and let the call
 finish. If a call still returns \`reauth-required\` (for example, a provider
 that needs a manual OAuth client and no terminal is available), run:

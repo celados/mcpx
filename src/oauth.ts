@@ -1,11 +1,48 @@
-import { createHash, randomBytes } from 'node:crypto'
+import type {
+	FetchLike,
+	OAuthClientInformationContext,
+	OAuthClientMetadata,
+	OAuthClientProvider,
+	OAuthDiscoveryState,
+	StoredOAuthClientInformation,
+	StoredOAuthTokens,
+} from '@modelcontextprotocol/client'
 
-import type { AuthDiscovery, OAuthServerMetadata, OAuthToken } from './types'
+import {
+	auth,
+	computeScopeUnion,
+	isStrictScopeSuperset,
+} from '@modelcontextprotocol/client'
+import { randomBytes } from 'node:crypto'
 
-type OAuthClientRegistration = {
-	clientId: string
-	clientSecret?: string
-	clientSecretKey?: string
+import type { AuthenticationProgress } from './authentication-coordinator'
+
+/** One server's OAuth grant in the Credential Store, in the SDK's stored shapes. */
+export type OAuthGrant = {
+	client?: {
+		information: StoredOAuthClientInformation
+		/** `manual` clients were entered by the user for a fixed redirect URI. */
+		registration: 'dynamic' | 'manual'
+		redirectUri?: string
+	}
+	tokens?: {
+		value: StoredOAuthTokens
+		expiresAt?: string
+	}
+}
+
+/** What the resource server asked for when it rejected a request. */
+export type OAuthChallenge = {
+	status: 401 | 403
+	resourceMetadataUrl?: string
+	scope?: string
+}
+
+export type OAuthGrantStore = {
+	read: () => Promise<OAuthGrant | undefined>
+	update: (
+		change: (grant: OAuthGrant | undefined) => OAuthGrant | undefined,
+	) => Promise<void>
 }
 
 export type ManualOAuthClientRequest = {
@@ -15,569 +52,473 @@ export type ManualOAuthClientRequest = {
 	scopes: string[]
 }
 
-export type ManualOAuthClientProvider = (
-	request: ManualOAuthClientRequest,
-) => Promise<OAuthClientRegistration>
+export type ManualOAuthClient = { clientId: string; clientSecret: string }
 
-type OAuthCallbackResult = {
-	code: string
-	state: string
+export type AuthorizeOAuthOptions = {
+	serverName: string
+	serverUrl: URL
+	grants: OAuthGrantStore
+	challenge?: OAuthChallenge | undefined
+	signal: AbortSignal
+	requestManualClient: (
+		request: ManualOAuthClientRequest,
+	) => Promise<ManualOAuthClient>
+	report: (progress: AuthenticationProgress) => void
+	openBrowser?: (url: string) => void
 }
-
-type OAuthCallbackServer = {
-	redirectUri: string
-	result: Promise<OAuthCallbackResult>
-	close: () => void
-}
-
-type AuthenticatedOAuth = Extract<AuthDiscovery, { kind: 'oauth-token' }>
-type DiscoveredOAuth = Extract<AuthDiscovery, { kind: 'oauth' }>
 
 const LOCALHOST = '127.0.0.1'
 const CALLBACK_PATH = '/callback'
-const CALLBACK_TIMEOUT_MS = 5 * 60 * 1000
 // Manual OAuth clients require a pre-registered redirect URI; random ports break that contract.
 const MANUAL_CALLBACK_PORT = 65245
+const MANUAL_REDIRECT_URI = `http://${LOCALHOST}:${MANUAL_CALLBACK_PORT}${CALLBACK_PATH}`
+const EXPIRY_MARGIN_MS = 60_000
 
-export async function performOAuthAuthentication(
-	serverName: string,
-	resourceUrl: URL,
-	auth: DiscoveredOAuth,
-	signal?: AbortSignal,
-	manualClientProvider?: ManualOAuthClientProvider,
-	onAuthorizationUrl?: (url: string) => void,
-): Promise<{
-	auth: AuthenticatedOAuth
-	token: OAuthToken
-	clientSecret?: string
-}> {
-	const authorizationServer = auth.authorizationServers?.[0]
-	if (!authorizationServer) {
-		throw new Error(
-			'OAuth authentication requires an authorization server URL.',
-		)
+export function oauthAccessToken(
+	grant: OAuthGrant | undefined,
+	now: Date = new Date(),
+): string | undefined {
+	const tokens = grant?.tokens
+	if (!tokens) return undefined
+	if (!tokens.expiresAt) return tokens.value.access_token
+	const expiresAt = Date.parse(tokens.expiresAt)
+	// An unreadable expiry cannot prove the token is usable.
+	if (!Number.isFinite(expiresAt)) return undefined
+	return expiresAt - now.getTime() > EXPIRY_MARGIN_MS
+		? tokens.value.access_token
+		: undefined
+}
+
+/**
+ * Makes a server's grant usable through the SDK's `auth()`: a silent refresh
+ * when the stored grant allows one, otherwise one browser authorization. Every
+ * credential the SDK produces is written through to the Credential Store as it
+ * arrives, so a rotated refresh token survives a cancelled flow.
+ */
+export async function authorizeOAuth(
+	options: AuthorizeOAuthOptions,
+): Promise<void> {
+	const { challenge, signal } = options
+	const grant = await options.grants.read()
+	const grantedScope = grant?.tokens?.value.scope
+	// A 403 step-up keeps what was granted and adds what the server asked for.
+	const scope =
+		challenge?.status === 403
+			? computeScopeUnion(grantedScope, challenge.scope)
+			: challenge?.scope
+	const widensScope =
+		challenge?.status === 403 && isStrictScopeSuperset(scope, grantedScope)
+	const base = {
+		serverUrl: options.serverUrl,
+		scope,
+		resourceMetadataUrl: challenge?.resourceMetadataUrl
+			? new URL(challenge.resourceMetadataUrl)
+			: undefined,
+		fetchFn: oauthFetch(signal),
 	}
 
-	const metadata = await fetchAuthorizationServerMetadata(authorizationServer, {
-		signal,
-	})
-	if (
-		!metadata.registrationEndpoint &&
-		metadata.tokenEndpointAuthMethodsSupported &&
-		!metadata.tokenEndpointAuthMethodsSupported.includes('client_secret_post')
-	) {
-		throw new Error(
-			'OAuth server requires a client authentication method mcpx cannot use yet.',
-		)
-	}
-	const verifier = base64Url(randomBytes(32))
-	const challenge = base64Url(createHash('sha256').update(verifier).digest())
-	const state = base64Url(randomBytes(24))
-	const manualClient = metadata.registrationEndpoint
-		? undefined
-		: await requireManualClientProvider(manualClientProvider)({
-				serverName,
-				redirectUri: `http://${LOCALHOST}:${MANUAL_CALLBACK_PORT}${CALLBACK_PATH}`,
-				issuer: metadata.issuer,
-				scopes: auth.scopesSupported ?? [],
-			})
-	const callback = await waitForOAuthCallback(
-		state,
-		manualClient ? MANUAL_CALLBACK_PORT : 0,
-		signal,
-	)
-
-	try {
-		const client =
-			manualClient ??
-			(await registerOAuthClient(metadata, callback.redirectUri, { signal }))
-		const scope = chooseOAuthScope(
-			auth.scopesSupported,
-			metadata.scopesSupported,
-		)
-		const authorizationUrl = buildAuthorizationUrl({
-			metadata,
-			clientId: client.clientId,
-			redirectUri: callback.redirectUri,
-			resourceUrl: resourceUrl.toString(),
-			scope,
-			state,
-			challenge,
+	// A refresh grant cannot widen scope (RFC 6749 §6), so step-up skips it.
+	if (grant?.client && grant.tokens?.value.refresh_token && !widensScope) {
+		options.report({
+			phase: 'refreshing-token',
+			message: 'refreshing OAuth token',
 		})
-
-		// The Runtime's stderr is detached; callers must receive the URL as an event
-		// so a failed browser launch never turns into a silent wait.
-		onAuthorizationUrl?.(authorizationUrl)
-		openBrowser(authorizationUrl)
-
-		const callbackResult = await callback.result
-		const exchangeOptions: {
-			metadata: OAuthServerMetadata
-			clientId: string
-			clientSecret?: string
-			redirectUri: string
-			resourceUrl: string
-			code: string
-			verifier: string
-			signal?: AbortSignal
-		} = {
-			metadata,
-			clientId: client.clientId,
-			redirectUri: callback.redirectUri,
-			resourceUrl: resourceUrl.toString(),
-			code: callbackResult.code,
-			verifier,
+		try {
+			const provider = new McpxOAuthProvider(options, grant, 'refresh')
+			if ((await auth(provider, base)) === 'AUTHORIZED') return
+		} catch (error) {
+			if (signal.aborted) throw signal.reason ?? error
+			// A revoked grant is repaired by a fresh authorization, not by asking the
+			// user to remove and re-add the server.
+			options.report({
+				phase: 'refreshing-token',
+				message:
+					error instanceof InteractionRequired
+						? 'OAuth token could not be refreshed; starting browser authorization'
+						: `token refresh failed (${errorMessage(error)}); starting browser authorization`,
+			})
 		}
-		if (client.clientSecret) exchangeOptions.clientSecret = client.clientSecret
-		if (signal) exchangeOptions.signal = signal
-		const token = await exchangeAuthorizationCode(exchangeOptions)
+	}
 
-		const tokenKey = `${serverName}:${metadata.issuer}`
-		const completed: {
-			auth: AuthenticatedOAuth
-			token: OAuthToken
-			clientSecret?: string
-		} = {
-			auth: { kind: 'oauth-token', tokenKey, confidence: 'confirmed' },
-			token,
-		}
-		if (client.clientSecret) completed.clientSecret = client.clientSecret
-		return completed
+	const state = randomBytes(24).toString('base64url')
+	const callback = await OAuthCallback.start(state, signal)
+	try {
+		const provider = new McpxOAuthProvider(
+			options,
+			grant,
+			'interactive',
+			callback,
+			state,
+		)
+		if ((await auth(provider, base)) === 'AUTHORIZED') return
+		const params = await callback.result
+		const code = params.get('code')
+		if (!code) throw new Error('Invalid OAuth callback.')
+		const iss = params.get('iss') ?? undefined
+		// RFC 9207: the SDK checks `iss` against the issuer the redirect targeted.
+		await auth(provider, {
+			...base,
+			authorizationCode: code,
+			...(iss ? { iss } : {}),
+		})
 	} finally {
 		callback.close()
 	}
 }
 
-export async function fetchAuthorizationServerMetadata(
-	issuer: string,
-	options: { signal?: AbortSignal } = {},
-): Promise<OAuthServerMetadata> {
-	const metadataUrls = authorizationServerMetadataUrls(issuer)
-	const failures: string[] = []
-
-	for (const metadataUrl of metadataUrls) {
-		const response = await fetch(metadataUrl, {
-			headers: { Accept: 'application/json' },
-			signal: options.signal,
-		})
-		if (!response.ok) {
-			failures.push(`${metadataUrl} (${response.status})`)
-			continue
-		}
-
-		return parseAuthorizationServerMetadata(
-			await response.json(),
-			metadataUrl.toString(),
-			issuer,
-		)
+class InteractionRequired extends Error {
+	constructor() {
+		super('OAuth authorization requires the browser.')
+		this.name = 'InteractionRequired'
 	}
-
-	throw new Error(
-		`Failed to fetch OAuth server metadata from ${failures.join(', ')}.`,
-	)
 }
 
-function authorizationServerMetadataUrls(issuer: string): URL[] {
-	const issuerUrl = new URL(issuer)
-	const issuerPath = issuerUrl.pathname === '/' ? '' : issuerUrl.pathname
-	const urls = [
-		// RFC 8414 inserts the well-known path between host and issuer path.
-		new URL(
-			`/.well-known/oauth-authorization-server${issuerPath}`,
-			issuerUrl.origin,
-		),
-	]
+/**
+ * The SDK drives the OAuth state machine; this provider supplies storage and
+ * the browser hand-off. `refresh` mode may only refresh: reaching the browser
+ * step aborts it. `interactive` mode is a new sign-in on this flow's loopback
+ * callback, so it never replays the stored tokens or a dynamic client
+ * registered for another port.
+ */
+class McpxOAuthProvider implements OAuthClientProvider {
+	readonly #options: AuthorizeOAuthOptions
+	readonly #stored: OAuthGrant | undefined
+	readonly #mode: 'refresh' | 'interactive'
+	readonly #callback: OAuthCallback | undefined
+	readonly #state: string | undefined
+	#client: OAuthGrant['client']
+	#tokensInvalidated = false
+	#verifier: string | undefined
+	#discovery: OAuthDiscoveryState | undefined
 
-	const issuerRelativePath = `${issuerPath.replace(/\/?$/, '/')}.well-known/oauth-authorization-server`
-	const issuerRelativeUrl = new URL(issuerRelativePath, issuerUrl.origin)
-	if (!urls.some((url) => url.toString() === issuerRelativeUrl.toString())) {
-		urls.push(issuerRelativeUrl)
-	}
-	return urls
-}
-
-function parseAuthorizationServerMetadata(
-	payload: unknown,
-	metadataUrl: string,
-	issuer: string,
-): OAuthServerMetadata {
-	const metadata = payload as Record<string, unknown>
-	const authorizationEndpoint = stringField(metadata.authorization_endpoint)
-	const tokenEndpoint = stringField(metadata.token_endpoint)
-	const issuerValue = stringField(metadata.issuer) ?? issuer
-	if (!authorizationEndpoint || !tokenEndpoint) {
-		throw new Error(
-			`OAuth server metadata at ${metadataUrl} is missing required endpoints.`,
-		)
-	}
-
-	const result: OAuthServerMetadata = {
-		issuer: issuerValue,
-		authorizationEndpoint,
-		tokenEndpoint,
-	}
-	const registrationEndpoint = stringField(metadata.registration_endpoint)
-	if (registrationEndpoint) result.registrationEndpoint = registrationEndpoint
-	const scopesSupported = stringArray(metadata.scopes_supported)
-	if (scopesSupported) result.scopesSupported = scopesSupported
-	const methods = stringArray(metadata.code_challenge_methods_supported)
-	if (methods) result.codeChallengeMethodsSupported = methods
-	const authMethods = stringArray(
-		metadata.token_endpoint_auth_methods_supported,
-	)
-	if (authMethods) result.tokenEndpointAuthMethodsSupported = authMethods
-	return result
-}
-
-export async function registerOAuthClient(
-	metadata: OAuthServerMetadata,
-	redirectUri: string,
-	options: { signal?: AbortSignal } = {},
-): Promise<OAuthClientRegistration> {
-	if (!metadata.registrationEndpoint) {
-		throw new Error(
-			'OAuth server does not advertise dynamic client registration.',
-		)
+	constructor(
+		options: AuthorizeOAuthOptions,
+		stored: OAuthGrant | undefined,
+		mode: 'refresh' | 'interactive',
+		callback?: OAuthCallback,
+		state?: string,
+	) {
+		this.#options = options
+		this.#stored = stored
+		this.#mode = mode
+		this.#callback = callback
+		this.#state = state
+		if (mode === 'refresh') this.#client = stored?.client
 	}
 
-	const response = await fetch(metadata.registrationEndpoint, {
-		method: 'POST',
-		headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
-		body: JSON.stringify({
+	get redirectUrl(): string {
+		if (this.#callback) return this.#callback.redirectUri
+		return this.#client?.redirectUri ?? MANUAL_REDIRECT_URI
+	}
+
+	get clientMetadata(): OAuthClientMetadata {
+		return {
 			client_name: 'MCPX',
-			redirect_uris: [redirectUri],
+			redirect_uris: [this.redirectUrl],
 			grant_types: ['authorization_code', 'refresh_token'],
 			response_types: ['code'],
 			token_endpoint_auth_method: 'none',
 			application_type: 'native',
-		}),
-		signal: options.signal,
-	})
-
-	if (!response.ok) {
-		throw new Error(
-			`OAuth dynamic client registration failed: ${await response.text()}`,
-		)
+		}
 	}
 
-	const body = (await response.json()) as Record<string, unknown>
-	const clientId = stringField(body.client_id)
-	if (!clientId) {
-		throw new Error(
-			'OAuth dynamic client registration response did not include client_id.',
-		)
+	state(): string {
+		return this.#state ?? randomBytes(24).toString('base64url')
 	}
-	return { clientId }
+
+	async clientInformation(
+		ctx?: OAuthClientInformationContext,
+	): Promise<StoredOAuthClientInformation | undefined> {
+		if (this.#client) return this.#client.information
+		if (this.#mode === 'refresh') throw new InteractionRequired()
+
+		const stored = this.#stored?.client
+		if (
+			stored?.registration === 'manual' &&
+			issuersMatch(stored.information.issuer, ctx?.issuer)
+		) {
+			await this.#callback?.listen(MANUAL_CALLBACK_PORT)
+			this.#client = stored
+			return stored.information
+		}
+		const metadata = this.#discovery?.authorizationServerMetadata
+		// Without metadata the SDK falls back to the conventional /register path.
+		if (!metadata || metadata.registration_endpoint) return undefined
+
+		this.#options.report({
+			phase: 'awaiting-input',
+			message: 'waiting for OAuth client credentials in the terminal',
+		})
+		const issuer = ctx?.issuer ?? metadata.issuer
+		const manual = await this.#options.requestManualClient({
+			serverName: this.#options.serverName,
+			redirectUri: MANUAL_REDIRECT_URI,
+			issuer,
+			scopes: this.#discovery?.resourceMetadata?.scopes_supported ?? [],
+		})
+		await this.#callback?.listen(MANUAL_CALLBACK_PORT)
+		this.#client = {
+			registration: 'manual',
+			redirectUri: MANUAL_REDIRECT_URI,
+			information: {
+				client_id: manual.clientId,
+				client_secret: manual.clientSecret,
+				issuer,
+			},
+		}
+		return this.#client.information
+	}
+
+	async saveClientInformation(
+		information: StoredOAuthClientInformation,
+	): Promise<void> {
+		this.#client =
+			this.#client?.information.client_id === information.client_id
+				? { ...this.#client, information }
+				: {
+						information,
+						registration: 'dynamic',
+						redirectUri: this.redirectUrl,
+					}
+		// An interactive client is persisted with the tokens it earns, so a failed
+		// sign-in never replaces a working grant. A refresh only back-stamps.
+		if (this.#mode === 'refresh') {
+			await this.#options.grants.update((grant) =>
+				grant?.client?.information.client_id === information.client_id
+					? { ...grant, client: { ...grant.client, information } }
+					: grant,
+			)
+		}
+	}
+
+	tokens(): StoredOAuthTokens | undefined {
+		if (this.#mode === 'interactive' || this.#tokensInvalidated)
+			return undefined
+		return this.#stored?.tokens?.value
+	}
+
+	async saveTokens(tokens: StoredOAuthTokens): Promise<void> {
+		const entry: NonNullable<OAuthGrant['tokens']> = { value: tokens }
+		if (tokens.expires_in !== undefined) {
+			entry.expiresAt = new Date(
+				Date.now() + tokens.expires_in * 1000,
+			).toISOString()
+		}
+		const client = this.#client
+		await this.#options.grants.update((grant) => {
+			// An issuer back-stamp re-saves the same token without `expires_in`.
+			if (
+				!entry.expiresAt &&
+				grant?.tokens?.expiresAt &&
+				grant.tokens.value.access_token === tokens.access_token
+			)
+				entry.expiresAt = grant.tokens.expiresAt
+			const next: OAuthGrant = { tokens: entry }
+			const nextClient = client ?? grant?.client
+			if (nextClient) next.client = nextClient
+			return next
+		})
+	}
+
+	redirectToAuthorization(authorizationUrl: URL): void {
+		if (this.#mode === 'refresh') throw new InteractionRequired()
+		const url = authorizationUrl.toString()
+		// The Runtime's stderr is detached; callers must receive the URL as an event
+		// so a failed browser launch never turns into a silent wait.
+		this.#options.report({
+			phase: 'awaiting-browser',
+			message: `authorize in your browser (waiting up to 5 minutes): ${url}`,
+			url,
+		})
+		;(this.#options.openBrowser ?? openBrowser)(url)
+	}
+
+	saveCodeVerifier(verifier: string): void {
+		this.#verifier = verifier
+	}
+
+	codeVerifier(): string {
+		if (!this.#verifier) throw new Error('OAuth code verifier is missing.')
+		return this.#verifier
+	}
+
+	saveDiscoveryState(state: OAuthDiscoveryState): void {
+		this.#discovery = state
+	}
+
+	discoveryState(): OAuthDiscoveryState | undefined {
+		return this.#discovery
+	}
+
+	async invalidateCredentials(
+		scope: 'all' | 'client' | 'tokens' | 'verifier' | 'discovery',
+	): Promise<void> {
+		if (scope === 'all' || scope === 'verifier') this.#verifier = undefined
+		if (scope === 'all' || scope === 'discovery') this.#discovery = undefined
+		const client = scope === 'all' || scope === 'client'
+		const tokens = scope === 'all' || scope === 'tokens'
+		if (client) this.#client = undefined
+		if (tokens) this.#tokensInvalidated = true
+		// A new sign-in keeps the stored grant until it succeeds.
+		if (this.#mode === 'interactive' || (!client && !tokens)) return
+		const rejected = this.#stored
+		await this.#options.grants.update((grant) => {
+			if (!grant) return grant
+			const next = { ...grant }
+			// Delete only what the server refused: another flow may have replaced it.
+			if (
+				tokens &&
+				grant.tokens?.value.access_token ===
+					rejected?.tokens?.value.access_token
+			)
+				delete next.tokens
+			if (
+				client &&
+				grant.client?.information.client_id ===
+					rejected?.client?.information.client_id
+			)
+				delete next.client
+			return next
+		})
+	}
 }
 
-export function chooseOAuthScope(
-	resourceScopes: string[] | undefined,
-	serverScopes: string[] | undefined,
-): string {
-	const supported = new Set(serverScopes ?? [])
-	const scopes = (resourceScopes ?? []).filter((scope) => {
-		return supported.size === 0 || supported.has(scope)
-	})
-	return scopes.join(' ')
-}
-
-export function shouldRefreshOAuthToken(
-	token: OAuthToken,
-	now: Date = new Date(),
+function issuersMatch(
+	stored: string | undefined,
+	current: string | undefined,
 ): boolean {
-	if (!token.expiresAt) return false
-	const expiresAt = Date.parse(token.expiresAt)
-	// An unreadable expiry cannot prove the token is usable.
-	if (!Number.isFinite(expiresAt)) return true
-	return expiresAt - now.getTime() <= 60_000
+	if (!stored || !current) return true
+	return stored.replace(/\/$/, '') === current.replace(/\/$/, '')
 }
 
-export async function refreshOAuthToken(options: {
-	issuer: string
-	resourceUrl: string
-	token: OAuthToken
-	clientSecret?: string
-	signal?: AbortSignal
-}): Promise<OAuthToken> {
-	if (!options.token.refreshToken) {
-		throw new Error('OAuth token has no refresh token.')
-	}
-	if (!options.token.clientId) {
-		throw new Error('OAuth token has no client_id to refresh with.')
-	}
-	const metadata = await fetchAuthorizationServerMetadata(options.issuer, {
-		signal: options.signal,
-	})
-	const body = new URLSearchParams({
-		grant_type: 'refresh_token',
-		client_id: options.token.clientId,
-		refresh_token: options.token.refreshToken,
-		resource: options.resourceUrl,
-	})
-	const clientSecret = options.clientSecret
-	if (options.token.clientSecretKey && !clientSecret) {
-		throw new Error('OAuth client secret is missing.')
-	}
-	if (clientSecret) body.set('client_secret', clientSecret)
-
-	const response = await fetch(metadata.tokenEndpoint, {
-		method: 'POST',
-		headers: {
-			'Content-Type': 'application/x-www-form-urlencoded',
-			Accept: 'application/json',
-		},
-		body,
-		signal: options.signal,
-	})
-
-	if (!response.ok) {
-		throw new Error(`OAuth token refresh failed: ${await response.text()}`)
-	}
-
-	const fallback: {
-		clientId: string
-		clientSecretKey?: string
-		refreshToken: string
-	} = {
-		clientId: options.token.clientId,
-		refreshToken: options.token.refreshToken,
-	}
-	if (options.token.clientSecretKey)
-		fallback.clientSecretKey = options.token.clientSecretKey
-	return parseOAuthTokenResponse(await response.json(), fallback)
-}
-
-function buildAuthorizationUrl(options: {
-	metadata: OAuthServerMetadata
-	clientId: string
-	redirectUri: string
-	resourceUrl: string
-	scope: string
-	state: string
-	challenge: string
-}): string {
-	const url = new URL(options.metadata.authorizationEndpoint)
-	url.searchParams.set('response_type', 'code')
-	url.searchParams.set('client_id', options.clientId)
-	url.searchParams.set('redirect_uri', options.redirectUri)
-	url.searchParams.set('code_challenge', options.challenge)
-	url.searchParams.set('code_challenge_method', 'S256')
-	url.searchParams.set('state', options.state)
-	url.searchParams.set('resource', options.resourceUrl)
-	if (options.scope) url.searchParams.set('scope', options.scope)
-	return url.toString()
-}
-
-async function exchangeAuthorizationCode(options: {
-	metadata: OAuthServerMetadata
-	clientId: string
-	clientSecret?: string
-	redirectUri: string
-	resourceUrl: string
-	code: string
-	verifier: string
-	signal?: AbortSignal
-}): Promise<OAuthToken> {
-	const body = new URLSearchParams({
-		grant_type: 'authorization_code',
-		client_id: options.clientId,
-		redirect_uri: options.redirectUri,
-		code: options.code,
-		code_verifier: options.verifier,
-		resource: options.resourceUrl,
-	})
-	if (options.clientSecret) body.set('client_secret', options.clientSecret)
-
-	const response = await fetch(options.metadata.tokenEndpoint, {
-		method: 'POST',
-		headers: {
-			'Content-Type': 'application/x-www-form-urlencoded',
-			Accept: 'application/json',
-		},
-		body,
-		signal: options.signal,
-	})
-
-	if (!response.ok) {
-		throw new Error(`OAuth token exchange failed: ${await response.text()}`)
-	}
-
-	const fallback: {
-		clientId: string
-		clientSecretKey?: string
-	} = {
-		clientId: options.clientId,
-	}
-	if (options.clientSecret)
-		fallback.clientSecretKey = clientSecretKey(options.clientId)
-	return parseOAuthTokenResponse(await response.json(), fallback)
-}
-
-export function parseOAuthTokenResponse(
-	payload: unknown,
-	fallback: {
-		clientId: string
-		clientSecretKey?: string
-		refreshToken?: string
-	},
-): OAuthToken {
-	const body = parseSuccessfulTokenPayload(payload)
-	const tokenBody = selectTokenBody(body)
-	const accessToken = stringField(tokenBody.access_token)
-	const tokenType = stringField(tokenBody.token_type) ?? 'Bearer'
-	if (!accessToken) {
-		throw new Error('OAuth token response did not include access_token.')
-	}
-
-	const token: OAuthToken = {
-		accessToken,
-		clientId: fallback.clientId,
-		tokenType,
-	}
-	if (fallback.clientSecretKey) token.clientSecretKey = fallback.clientSecretKey
-	const refreshToken =
-		stringField(tokenBody.refresh_token) ?? fallback.refreshToken
-	if (refreshToken) token.refreshToken = refreshToken
-	const scope = stringField(tokenBody.scope)
-	if (scope) token.scope = scope
-	const expiresIn = numberField(tokenBody.expires_in)
-	if (expiresIn !== undefined) {
-		token.expiresAt = new Date(Date.now() + expiresIn * 1000).toISOString()
-	}
-	return token
-}
-
-function requireManualClientProvider(
-	provider: ManualOAuthClientProvider | undefined,
-): ManualOAuthClientProvider {
-	if (!provider) {
-		throw new Error(
-			'Manual OAuth client authentication requires Caller Input from mcpx @refresh.',
+/**
+ * Binds every OAuth request to the flow's lifetime and accepts Slack's token
+ * response, which nests a user token under `authed_user`.
+ */
+function oauthFetch(signal: AbortSignal): FetchLike {
+	return async (url, init) => {
+		const response = await fetch(url, {
+			...init,
+			signal: init?.signal ? AbortSignal.any([init.signal, signal]) : signal,
+		})
+		if (
+			!(init?.body instanceof URLSearchParams) ||
+			!init.body.has('grant_type')
 		)
+			return response
+		return unwrapAuthedUser(response)
 	}
-	return provider
 }
 
-function parseSuccessfulTokenPayload(
-	payload: unknown,
-): Record<string, unknown> {
-	const body = payload as Record<string, unknown>
-	if (body.ok === false) {
-		throw new Error(
-			`OAuth token response failed: ${stringField(body.error) ?? 'unknown_error'}`,
-		)
-	}
-	return body
+async function unwrapAuthedUser(response: Response): Promise<Response> {
+	if (!response.headers.get('content-type')?.includes('json')) return response
+	const body = (await response
+		.clone()
+		.json()
+		.catch(() => undefined)) as Record<string, unknown> | undefined
+	const user = body?.authed_user as Record<string, unknown> | undefined
+	if (!body || body.access_token || typeof user?.access_token !== 'string')
+		return response
+	return Response.json(user, {
+		status: response.status,
+		statusText: response.statusText,
+	})
 }
 
-function selectTokenBody(
-	body: Record<string, unknown>,
-): Record<string, unknown> {
-	const authedUser = body.authed_user
-	if (
-		authedUser &&
-		typeof authedUser === 'object' &&
-		stringField((authedUser as Record<string, unknown>).access_token)
-	) {
-		return authedUser as Record<string, unknown>
-	}
-	return body
-}
+/** The loopback redirect target for one browser authorization. */
+class OAuthCallback {
+	readonly result: Promise<URLSearchParams>
+	readonly #state: string
+	#server: Bun.Server<undefined> | undefined
+	// A stopped Bun server no longer reports its port; the code exchange that
+	// follows the callback must repeat the exact redirect URI.
+	#redirectUri: string | undefined
+	#finish: (params: URLSearchParams) => void = () => {}
+	#fail: (error: Error) => void = () => {}
+	#settled = false
 
-function clientSecretKey(clientId: string): string {
-	return `oauth-client:${clientId}`
-}
-
-function waitForOAuthCallback(
-	expectedState: string,
-	port: number,
-	signal?: AbortSignal,
-): OAuthCallbackServer {
-	let server: Bun.Server<undefined> | undefined
-	let timer: ReturnType<typeof setTimeout> | undefined
-	let settled = false
-	let closeWithError = () => {}
-	const result = new Promise<OAuthCallbackResult>((finish, fail) => {
-		const onAbort = () => {
-			complete(
-				'fail',
-				signal?.reason instanceof Error
+	private constructor(state: string, signal: AbortSignal) {
+		this.#state = state
+		this.result = new Promise<URLSearchParams>((resolve, reject) => {
+			this.#finish = resolve
+			this.#fail = reject
+		})
+		// The browser step can fail before anyone awaits the callback.
+		void this.result.catch(() => {})
+		const onAbort = () =>
+			this.#complete(
+				signal.reason instanceof Error
 					? signal.reason
 					: new Error('OAuth authentication cancelled.'),
 			)
-		}
-		const complete = (
-			outcome: 'finish' | 'fail',
-			value: OAuthCallbackResult | Error,
-		) => {
-			if (settled) return
-			settled = true
-			if (timer) clearTimeout(timer)
-			signal?.removeEventListener('abort', onAbort)
-			server?.stop()
-			if (outcome === 'finish') {
-				finish(value as OAuthCallbackResult)
-				return
-			}
-			fail(value)
-		}
-		closeWithError = () =>
-			complete('fail', new Error('OAuth callback server closed.'))
+		if (signal.aborted) onAbort()
+		else signal.addEventListener('abort', onAbort, { once: true })
+		void this.result
+			.finally(() => signal.removeEventListener('abort', onAbort))
+			.catch(() => {})
+	}
 
-		timer = setTimeout(() => {
-			complete('fail', new Error('OAuth authentication timed out.'))
-		}, CALLBACK_TIMEOUT_MS)
-		if (signal?.aborted) {
-			onAbort()
-			return
-		}
-		signal?.addEventListener('abort', onAbort, { once: true })
+	static async start(
+		state: string,
+		signal: AbortSignal,
+	): Promise<OAuthCallback> {
+		const callback = new OAuthCallback(state, signal)
+		await callback.listen(0)
+		return callback
+	}
 
-		server = Bun.serve({
+	get redirectUri(): string {
+		if (!this.#redirectUri)
+			throw new Error('OAuth callback server is not running.')
+		return this.#redirectUri
+	}
+
+	async listen(port: number): Promise<void> {
+		if (this.#server && (port === 0 || this.#server.port === port)) return
+		this.#server?.stop(true)
+		this.#server = Bun.serve({
 			hostname: LOCALHOST,
 			port,
 			routes: {
-				[CALLBACK_PATH]: (request) => {
-					const requestUrl = new URL(request.url)
-					const code = requestUrl.searchParams.get('code')
-					const state = requestUrl.searchParams.get('state')
-					const error = requestUrl.searchParams.get('error')
-					if (error) {
-						complete('fail', new Error(`OAuth authorization failed: ${error}`))
-						return new Response(`OAuth failed: ${error}`, { status: 400 })
-					}
-					if (!code || state !== expectedState) {
-						complete('fail', new Error('Invalid OAuth callback.'))
-						return new Response('Invalid OAuth callback.', { status: 400 })
-					}
-
-					complete('finish', { code, state })
-					return new Response(
-						'MCPX authentication complete. You can close this tab.',
-					)
-				},
+				[CALLBACK_PATH]: (request) => this.#receive(new URL(request.url)),
 			},
-			fetch() {
-				return new Response('Not found', { status: 404 })
-			},
+			fetch: () => new Response('Not found', { status: 404 }),
 		})
-	})
-	// Registration can fail before anyone awaits the callback; keep close rejection handled.
-	void result.catch(() => {})
-
-	if (!server) {
-		throw new Error('Failed to start local OAuth callback server.')
+		this.#redirectUri = `http://${LOCALHOST}:${this.#server.port}${CALLBACK_PATH}`
+		// The Authentication Flow timeout owns this lifetime, not the socket.
+		this.#server.unref()
 	}
-	// The timeout owns the authentication lifetime; a stopped Bun server must not
-	// strand the CLI if its native socket cleanup lags behind the rejected promise.
-	server.unref()
 
-	return {
-		redirectUri: `http://${LOCALHOST}:${server.port}${CALLBACK_PATH}`,
-		result,
-		close: () => {
-			closeWithError()
-		},
+	close(): void {
+		this.#complete(new Error('OAuth callback server closed.'))
+	}
+
+	#receive(url: URL): Response {
+		const params = url.searchParams
+		if (params.get('state') !== this.#state) {
+			this.#complete(new Error('Invalid OAuth callback.'))
+			return new Response('Invalid OAuth callback.', { status: 400 })
+		}
+		const error = params.get('error')
+		if (error) {
+			// `error_description` may come from a mixed-up authorization server.
+			this.#complete(new Error(`OAuth authorization failed: ${error}`))
+			return new Response(`OAuth failed: ${error}`, { status: 400 })
+		}
+		if (!params.get('code')) {
+			this.#complete(new Error('Invalid OAuth callback.'))
+			return new Response('Invalid OAuth callback.', { status: 400 })
+		}
+		this.#complete(params)
+		return new Response('MCPX authentication complete. You can close this tab.')
+	}
+
+	#complete(outcome: URLSearchParams | Error): void {
+		if (this.#settled) return
+		this.#settled = true
+		this.#server?.stop()
+		if (outcome instanceof Error) this.#fail(outcome)
+		else this.#finish(outcome)
 	}
 }
 
@@ -589,28 +530,9 @@ function openBrowser(url: string): void {
 				? 'cmd'
 				: 'xdg-open'
 	const args = process.platform === 'win32' ? ['/c', 'start', '', url] : [url]
-	Bun.spawn([command, ...args], {
-		stdout: 'ignore',
-		stderr: 'ignore',
-	})
+	Bun.spawn([command, ...args], { stdout: 'ignore', stderr: 'ignore' })
 }
 
-function base64Url(input: Buffer): string {
-	return input.toString('base64url')
-}
-
-function stringField(value: unknown): string | undefined {
-	return typeof value === 'string' && value.length > 0 ? value : undefined
-}
-
-function numberField(value: unknown): number | undefined {
-	return typeof value === 'number' && Number.isFinite(value) ? value : undefined
-}
-
-function stringArray(value: unknown): string[] | undefined {
-	if (!Array.isArray(value)) return undefined
-	const values = value.filter(
-		(entry): entry is string => typeof entry === 'string',
-	)
-	return values.length > 0 ? values : undefined
+function errorMessage(error: unknown): string {
+	return error instanceof Error ? error.message : String(error)
 }

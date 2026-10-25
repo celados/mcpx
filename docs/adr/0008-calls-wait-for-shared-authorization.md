@@ -7,7 +7,7 @@ supersedes: 0007-authentication-is-explicit.md
 
 # Calls Wait for Shared Authorization
 
-When a Call's Credential Identity is unusable, the MCP Runtime makes it usable instead of returning `reauth-required`: it refreshes the token silently when a refresh grant exists, and otherwise starts or joins the single shared browser Authentication Flow (ADR 0004). The Call waits for that flow, bounded by the flow's 5 minute timeout, and then proceeds. A 401 from the server replaces the credential the same way and retries the request once, because a rejected request was never executed.
+When a Call's Credential Identity is unusable, the MCP Runtime makes it usable instead of returning `reauth-required`: it refreshes the token silently when a refresh grant exists, and otherwise starts or joins the single shared browser Authentication Flow (ADR 0004). The Call waits for that flow, bounded by the flow's 5 minute timeout, and then proceeds. A 401 from the server replaces the credential the same way and retries the request once, because a rejected request was never executed. [ADR 0009](0009-a-challenge-is-the-oauth-discovery-entry.md) extends this to servers added without auth: the challenge, not `@add`, decides that a server needs OAuth.
 
 [ADR 0007](0007-authentication-is-explicit.md) returned `reauth-required` for every unusable credential, which treated a non-interactive token refresh like an interactive login: routine hourly expiry failed ordinary Calls until the user ran `mcpx @refresh`. The recoverable case now recovers, and the interactive case waits rather than failing.
 

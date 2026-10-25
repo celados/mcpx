@@ -1,50 +1,18 @@
+// The 401 challenge, not this declaration, decides whether a server needs OAuth;
+// `none` is promoted to `oauth` once a Call is challenged and authorized.
 export type AuthDiscovery =
 	| { kind: 'none' }
-	| {
-			kind: 'oauth'
-			confidence: 'confirmed' | 'inferred'
-			resourceMetadataUrl?: string
-			authorizationServers?: string[]
-			scopesSupported?: string[]
-	  }
+	| { kind: 'oauth' }
 	| {
 			kind: 'bearer'
 			credentials: BearerCredential[]
 			strategy: 'round-robin'
 			confidence: 'configured'
 	  }
-	| { kind: 'oauth-token'; tokenKey: string; confidence: 'confirmed' }
-	| { kind: 'unknown'; reason: string }
 
 export type BearerCredential =
 	| { kind: 'env'; name: string }
 	| { kind: 'literal'; value: string }
-
-export type OAuthServerMetadata = {
-	issuer: string
-	authorizationEndpoint: string
-	tokenEndpoint: string
-	registrationEndpoint?: string
-	scopesSupported?: string[]
-	codeChallengeMethodsSupported?: string[]
-	tokenEndpointAuthMethodsSupported?: string[]
-}
-
-export type OAuthToken = {
-	accessToken: string
-	tokenType: string
-	clientId?: string
-	clientSecretKey?: string
-	refreshToken?: string
-	expiresAt?: string
-	scope?: string
-}
-
-export type TokenCache = {
-	version: 1
-	oauth: Record<string, OAuthToken>
-	oauthClientSecrets?: Record<string, string>
-}
 
 export type ToolDefinition = {
 	name: string

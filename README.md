@@ -51,17 +51,10 @@ mcpx @add "{ name: 'browser', url: 'http://127.0.0.1:9000/mcp' }"
 > Chrome. It exposes a local MCP server that lets agents control the browser
 > directly — navigating pages, extracting content, and interacting with web UIs.
 
-mcpx stores server configuration in:
-
-```text
-~/.agents/mcpx/servers.json
-```
-
-OAuth tokens and client secrets are stored separately in the global token cache:
-
-```text
-~/.agents/mcpx/tokens.json
-```
+mcpx keeps its state under `~/.agents/mcpx/state-v2/`: server declarations in
+`registry.json`, credentials (OAuth grants, bearer values, secret headers) in
+`credentials.json`, and observed tool schemas in `schema-cache.json`. The MCP
+Runtime is the only writer.
 
 Project directories do not need MCP config files. A project should decide which
 global servers are relevant by using schema selectors or a generated skill.
@@ -194,9 +187,19 @@ passed through the shell literally.
 When several bearer credentials are registered, mcpx advances a local
 round-robin cursor before each HTTP request.
 
-When `@add` detects OAuth, mcpx tries to complete authentication immediately.
+OAuth follows the MCP authorization spec through the official MCP SDK. A server
+does not need to declare OAuth up front: whenever it answers a request with
+`401` and a `WWW-Authenticate: Bearer resource_metadata=…` challenge, mcpx
+discovers its authorization server from that challenge, authorizes, records
+the server as OAuth, and retries the request. This covers servers whose tools
+are partly anonymous — `@add` lists their tools without credentials, and the
+first call to a protected tool starts sign-in. A `403 insufficient_scope`
+challenge re-authorizes with the additional scope the same way. `@add` itself
+never opens a browser; it reports `auth-required` when listing tools was
+challenged.
+
 For OAuth servers that support dynamic client registration, mcpx registers a
-client automatically.
+client automatically for each browser sign-in.
 
 For OAuth servers that do not support dynamic client registration, such as
 Slack, mcpx prompts for a manual `client_id` and `client_secret`. These providers
@@ -213,7 +216,7 @@ OAuth credentials repair themselves during ordinary tool calls:
 
 - When a token is close to expiry, mcpx refreshes it silently before the call.
 - When the server rejects a token with 401, mcpx refreshes it and retries the
-  call once.
+  call once. Another call that already replaced the token is not undone.
 - When no refresh is possible (no token yet, or the refresh grant was revoked),
   the call opens browser authorization, prints the authorization URL to stderr,
   and waits up to 5 minutes for it to complete before continuing. Concurrent

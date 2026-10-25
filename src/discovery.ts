@@ -6,10 +6,8 @@ import type {
 	ToolDefinition,
 } from './types'
 
-import { discoverAuth } from './auth-discovery'
 import { authFromBearerValues, describeBearerAuth } from './bearer'
-import { resolveProbeHeaders } from './headers'
-import { listMcpTools } from './mcp-client'
+import { authorizationChallenge, listMcpTools } from './mcp-client'
 import { assignCommandNames } from './names'
 
 export type DiscoverServerOptions = {
@@ -36,20 +34,13 @@ export async function discoverServer(
 
 	const url = new URL(options.url)
 	const configuredAuth = authFromBearerValues(options.bearer)
-	const seedServer: ServerConfig = {
+	const server: ServerConfig = {
 		transport: 'http',
 		url: url.toString(),
 		auth: configuredAuth ?? { kind: 'none' },
-	}
-	if (options.headers) seedServer.headers = options.headers
-
-	const discoveredAuth =
-		configuredAuth ?? (await discoverAuth(url, resolveProbeHeaders(seedServer)))
-	const server: ServerConfig = {
-		...seedServer,
-		auth: discoveredAuth,
 		discoveredAt: new Date().toISOString(),
 	}
+	if (options.headers) server.headers = options.headers
 
 	try {
 		const tools = await listMcpTools(server, options.name)
@@ -61,21 +52,22 @@ export async function discoverServer(
 		}
 	} catch (error) {
 		const message = error instanceof Error ? error.message : String(error)
-		// @add never starts OAuth (ADR-0007), so name the one command that does;
-		// the transport error for an unauthenticated POST is empty noise here.
-		if (discoveredAuth.kind === 'oauth') {
+		// The challenge, not a probe, says the server wants OAuth (ADR 0009).
+		// @add never starts OAuth, so name the commands that do.
+		if (!configuredAuth && authorizationChallenge(error)) {
+			server.auth = { kind: 'oauth' }
 			return {
 				server,
 				status: 'auth-required',
 				message:
-					'Authentication is required before tool schemas can be listed. Run `mcpx @refresh` to authenticate.',
+					'Authentication is required before tool schemas can be listed. Run `mcpx @refresh` or call a tool to authenticate.',
 			}
 		}
-		if (discoveredAuth.kind === 'unknown') {
+		if (configuredAuth && authorizationChallenge(error)) {
 			return {
 				server,
 				status: 'auth-required',
-				message: `Authentication is required before tool schemas can be listed. ${message}`,
+				message: `The configured bearer credential was rejected. ${message}`,
 			}
 		}
 		return { server, status: 'unreachable', message }
@@ -136,11 +128,7 @@ export function describeAuth(auth: AuthDiscovery): string {
 		case 'bearer':
 			return describeBearerAuth(auth)
 		case 'oauth':
-			return `oauth ${auth.confidence}`
-		case 'oauth-token':
-			return 'oauth token'
-		case 'unknown':
-			return `unknown: ${auth.reason}`
+			return 'oauth'
 	}
 }
 

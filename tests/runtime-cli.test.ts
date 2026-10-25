@@ -269,6 +269,7 @@ function startHttpFixture(
 					issuer,
 					authorization_endpoint: `${issuer}/authorize`,
 					token_endpoint: `${issuer}/token`,
+					response_types_supported: ['code'],
 				})
 			}
 			if (requestUrl.pathname === '/token') {

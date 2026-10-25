@@ -1,13 +1,14 @@
 import { createHash } from 'node:crypto'
 
 import type { McpConnection } from './mcp-client'
+import type { OAuthChallenge } from './oauth'
 import type { RuntimeCaller } from './runtime-caller'
 import type { NotificationMode } from './runtime-protocol'
 import type { DeclaredServer, RuntimeStores } from './runtime-stores'
 import type { McpTool, ServerConfig, ToolDefinition } from './types'
 
-import { normalizeAuthScheme } from './headers'
 import {
+	authorizationChallenge,
 	connectMcpClient,
 	listAllMcpTools,
 	toolCallRequestOptions,
@@ -17,7 +18,7 @@ import {
 	createNotificationBuffer,
 	flushNotificationBuffer,
 } from './notifications'
-import { shouldRefreshOAuthToken } from './oauth'
+import { oauthAccessToken } from './oauth'
 import {
 	progressEvent,
 	reauthRequired,
@@ -35,6 +36,11 @@ type ResolvedServer = {
 	key: string
 	config: ServerConfig
 }
+
+/** What one attempt presents to an HTTP server; `undefined` for stdio. */
+type AttemptCredential =
+	| { headers: Record<string, string>; token: string | undefined }
+	| undefined
 
 type ManagedRuntimeSession = {
 	key: string
@@ -105,8 +111,13 @@ export class RuntimeSessionPool {
 		this.#assertAccepting()
 		const session = this.#sessionFor(input.serverName, resolved)
 		session.queue.enqueue(call, (signal) =>
-			this.#runAuthorized(session, input.serverName, call, signal, (headers) =>
-				this.#callTool(session, call, input, headers, signal),
+			this.#runAuthorized(
+				session,
+				input.serverName,
+				call,
+				signal,
+				(credential) =>
+					this.#callTool(session, call, input, credential, signal),
 			),
 		)
 		await call.settled
@@ -143,14 +154,14 @@ export class RuntimeSessionPool {
 				serverName,
 				call,
 				signal,
-				async (headers) => {
+				async (credential) => {
 					const timeout = setTimeout(() => {
 						void call.cancel('timeout')
 					}, toolCallRequestOptions().timeout)
 					timeout.unref()
 					try {
 						return await listAllMcpTools(
-							(await this.#ensureConnected(session, headers)).client,
+							(await this.#ensureConnected(session, credential)).client,
 						)
 					} finally {
 						clearTimeout(timeout)
@@ -175,29 +186,29 @@ export class RuntimeSessionPool {
 	#authorize(
 		serverName: string,
 		call: RuntimeCall,
-		rejected = false,
+		challenge?: OAuthChallenge,
 	): ReturnType<RuntimeAuthentication['authorize']> {
 		return this.#authentication.authorize(serverName, call.caller, {
-			rejected,
+			challenge,
 			signal: call.signal,
 			onProgress: (progress) => call.emit(progressEvent(progress)),
 		})
 	}
 
 	/**
-	 * Runs one attempt with the current credential. A 401 means the server never
-	 * executed the request, so it is safe to replace the credential and retry
-	 * once.
+	 * Runs one attempt with the current credential. A 401 or 403 challenge means
+	 * the server never executed the request, so it is safe to authorize as the
+	 * challenge asks — even on a server added without auth — and retry once.
 	 */
 	async #runAuthorized<T>(
 		session: ManagedRuntimeSession,
 		serverName: string,
 		call: RuntimeCall,
 		signal: AbortSignal,
-		run: (headers: Record<string, string> | undefined) => Promise<T>,
+		run: (credential: AttemptCredential) => Promise<T>,
 	): Promise<T> {
 		for (let retried = false; ; retried = true) {
-			const headers = await this.#resolveHeaders(serverName)
+			const credential = await this.#resolveCredential(serverName)
 			signal.throwIfAborted()
 			if (session.closing) {
 				throw new RuntimeOperationError(
@@ -205,15 +216,19 @@ export class RuntimeSessionPool {
 					'MCP Runtime session is closing.',
 				)
 			}
+			let challenge: OAuthChallenge | undefined
 			try {
-				return await run(headers)
+				return await run(credential)
 			} catch (error) {
-				if (!isUnauthorizedError(error)) throw error
+				challenge = authorizationChallenge(error)
+				if (!challenge) throw error
 				session.evictCount += 1
 				await this.#closeSession(session, false)
 				if (retried) throw reauthRequired(serverName)
 			}
-			if ((await this.#authorize(serverName, call, true)) === 'disconnected')
+			if (
+				(await this.#authorize(serverName, call, challenge)) === 'disconnected'
+			)
 				throw new RuntimeOperationError('cancelled', 'Runtime caller left.')
 			signal.throwIfAborted()
 		}
@@ -223,7 +238,7 @@ export class RuntimeSessionPool {
 		session: ManagedRuntimeSession,
 		call: RuntimeCall,
 		input: RuntimeCallInput,
-		headers: Record<string, string> | undefined,
+		credential: AttemptCredential,
 		signal: AbortSignal,
 	) {
 		const buffer = createNotificationBuffer()
@@ -243,10 +258,9 @@ export class RuntimeSessionPool {
 		session.currentBuffer =
 			input.notificationMode === 'discard' ? undefined : buffer
 		try {
-			const connection = await this.#ensureConnected(session, headers)
+			const connection = await this.#ensureConnected(session, credential)
 			const result = await connection.client.callTool(
 				{ name: input.toolName, arguments: input.input },
-				undefined,
 				{ ...requestOptions, signal },
 			)
 			const notifications = await flushNotificationBuffer(buffer)
@@ -342,6 +356,13 @@ export class RuntimeSessionPool {
 			)
 		}
 
+		if (declared.transport !== 'stdio' && declared.auth.kind === 'oauth') {
+			// Each OAuth server carries its own grant, so never share its session.
+			return {
+				key: stableServerKey({ name: serverName, ...declared }),
+				config: { url: declared.url, auth: { kind: 'none' } },
+			}
+		}
 		const key = stableServerKey(declared)
 		if (declared.transport === 'stdio') {
 			return {
@@ -353,9 +374,7 @@ export class RuntimeSessionPool {
 		return { key, config: { url: declared.url, auth: { kind: 'none' } } }
 	}
 
-	async #resolveHeaders(
-		serverName: string,
-	): Promise<Record<string, string> | undefined> {
+	async #resolveCredential(serverName: string): Promise<AttemptCredential> {
 		const { registry, credentials } = await this.#stores.readState()
 		const declared = registry.servers[serverName]
 		if (!declared)
@@ -369,6 +388,7 @@ export class RuntimeSessionPool {
 			Accept: 'application/json, text/event-stream',
 			...(credentials.headers[serverName] ?? {}),
 		}
+		let token: string | undefined
 		if (declared.auth.kind === 'bearer') {
 			const key = stableServerKey(declared)
 			const cursor = this.#bearerCursors.get(key) ?? 0
@@ -386,25 +406,15 @@ export class RuntimeSessionPool {
 					? process.env[credential.name]
 					: credentials.bearer[credential.key]
 			if (!value) throw reauthRequired(serverName)
-			headers.Authorization = value.startsWith('Bearer ')
-				? value
-				: `Bearer ${value}`
-		} else if (declared.auth.kind === 'oauth-token') {
-			const token = credentials.oauth[declared.auth.tokenKey]
+			token = value.replace(/^Bearer /, '')
+		} else if (declared.auth.kind === 'oauth') {
+			token = oauthAccessToken(credentials.oauth[serverName])
 			// Authorization already ran before queueing; this only catches a credential
 			// that expired or vanished while the Call waited for its turn.
-			if (!token || shouldRefreshOAuthToken(token)) {
-				throw reauthRequired(serverName)
-			}
-			headers.Authorization = `${normalizeAuthScheme(token.tokenType)} ${token.accessToken}`
-		} else if (
-			declared.auth.kind === 'oauth' ||
-			declared.auth.kind === 'unknown'
-		) {
-			throw reauthRequired(serverName)
+			if (!token) throw reauthRequired(serverName)
 		}
 
-		return headers
+		return { headers, token }
 	}
 
 	#sessionFor(
@@ -433,7 +443,7 @@ export class RuntimeSessionPool {
 
 	async #ensureConnected(
 		session: ManagedRuntimeSession,
-		headers?: Record<string, string>,
+		credential?: AttemptCredential,
 	): Promise<McpConnection> {
 		if (session.closing) {
 			throw new RuntimeOperationError(
@@ -442,12 +452,16 @@ export class RuntimeSessionPool {
 			)
 		}
 		if (session.connection) {
-			if (headers) session.connection.updateHeaders(headers)
+			if (credential) {
+				session.connection.updateHeaders(credential.headers)
+				session.connection.updateToken(credential.token)
+			}
 			return session.connection
 		}
 		if (!session.connecting) {
 			session.connecting = this.#connect(session.config, {
-				headers,
+				headers: credential?.headers,
+				token: credential?.token,
 				sessionId: session.lastSessionId,
 				onNotification: (notification) => {
 					if (session.currentBuffer) {
@@ -518,16 +532,6 @@ function sortValue(value: unknown): unknown {
 			.sort(([left], [right]) => left.localeCompare(right))
 			.map(([key, item]) => [key, sortValue(item)]),
 	)
-}
-
-function isUnauthorizedError(error: unknown): boolean {
-	if (error instanceof RuntimeOperationError) return false
-	if (error instanceof Error) {
-		const code = (error as { code?: unknown }).code
-		if (code === 401 || error.name === 'UnauthorizedError') return true
-	}
-	const message = error instanceof Error ? error.message : String(error)
-	return /\b401\b/.test(message) || /unauthorized/i.test(message)
 }
 
 function withCommandNames(tools: McpTool[]): ToolDefinition[] {

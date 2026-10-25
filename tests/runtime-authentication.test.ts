@@ -4,9 +4,11 @@ import { tmpdir } from 'node:os'
 import path from 'node:path'
 
 import type { McpConnection } from '../src/mcp-client'
+import type { AuthorizeOAuthOptions, OAuthGrant } from '../src/oauth'
 import type { RuntimeFrame } from '../src/runtime-protocol'
-import type { RuntimeStores } from '../src/runtime-stores'
+import type { DeclaredServer, RuntimeStores } from '../src/runtime-stores'
 
+import { AuthorizationChallengeError } from '../src/mcp-client'
 import { McpRuntime } from '../src/runtime'
 import { RuntimeAuthentication } from '../src/runtime-authentication'
 import { createInMemoryRuntimeCaller } from '../src/runtime-caller'
@@ -36,6 +38,7 @@ describe('Runtime authentication', () => {
 						issuer,
 						authorization_endpoint: `${issuer}/authorize`,
 						token_endpoint: `${issuer}/token`,
+						response_types_supported: ['code'],
 					})
 				}
 				if (request.url.endsWith('/token')) {
@@ -53,21 +56,9 @@ describe('Runtime authentication', () => {
 		})
 		servers.push(fixture)
 		issuer = `http://127.0.0.1:${fixture.port}`
-		const tokenKey = `fixture:${issuer}`
 		const stores = await createStores(
-			{
-				url: `${issuer}/mcp`,
-				auth: { kind: 'oauth-token', tokenKey, confidence: 'confirmed' },
-			},
-			{
-				[tokenKey]: {
-					accessToken: 'expired',
-					refreshToken: 'refresh-1',
-					clientId: 'fixture-client',
-					tokenType: 'bearer',
-					expiresAt: '2000-01-01T00:00:00.000Z',
-				},
-			},
+			{ fixture: { url: `${issuer}/mcp`, auth: { kind: 'oauth' } } },
+			{ fixture: expiredGrant() },
 		)
 		const runtime = new McpRuntime(stores)
 		const callers = Array.from({ length: 5 }, (_, index) =>
@@ -88,33 +79,27 @@ describe('Runtime authentication', () => {
 		)
 
 		expect(refreshRequests).toBe(1)
-		expect((await stores.credentials.read()).oauth[tokenKey]?.accessToken).toBe(
-			'rotated-access',
-		)
+		expect(
+			(await stores.credentials.read()).oauth.fixture?.tokens?.value
+				.access_token,
+		).toBe('rotated-access')
 		expect(callers.every((caller) => terminalFrames(caller).length === 1)).toBe(
 			true,
 		)
 	})
 
 	it('keeps an interactive flow for remaining waiters and aborts after the final disconnect', async () => {
-		const stores = await createStores({
-			url: 'http://127.0.0.1:1/mcp',
-			auth: {
-				kind: 'oauth',
-				confidence: 'confirmed',
-				authorizationServers: ['http://127.0.0.1:1'],
-			},
-		})
+		const stores = await createStores({ fixture: oauthServer() })
 		let signal: AbortSignal | undefined
 		let callbackOpen = false
 		let starts = 0
 		const authentication = new RuntimeAuthentication(stores, {
-			authenticate: async (_name, _url, _auth, flowSignal) => {
+			authorizeOAuth: async ({ signal: flowSignal }) => {
 				starts += 1
 				signal = flowSignal
 				callbackOpen = true
 				return new Promise((_resolve, reject) => {
-					flowSignal?.addEventListener(
+					flowSignal.addEventListener(
 						'abort',
 						() => {
 							callbackOpen = false
@@ -162,49 +147,17 @@ describe('Runtime authentication', () => {
 	it('continues past a failed server and attributes the failure to it', async () => {
 		const stores = await createStores(
 			{
-				url: 'http://127.0.0.1:1/broken/mcp',
-				auth: {
-					kind: 'oauth-token',
-					tokenKey: 'broken:http://127.0.0.1:1',
-					confidence: 'confirmed',
-				},
+				broken: oauthServer('http://127.0.0.1:1/broken/mcp'),
+				working: oauthServer('http://127.0.0.1:1/working/mcp'),
 			},
-			{
-				'broken:http://127.0.0.1:1': {
-					accessToken: 'broken-access',
-					refreshToken: 'broken-refresh',
-					clientId: 'broken-client',
-					tokenType: 'bearer',
-					expiresAt: '2000-01-01T00:00:00.000Z',
-				},
-			},
-			'broken',
+			{ broken: expiredGrant(), working: expiredGrant() },
 		)
-		await stores.upsertServer('working', {
-			url: 'http://127.0.0.1:1/working/mcp',
-			auth: {
-				kind: 'oauth-token',
-				tokenKey: 'working:http://127.0.0.1:1',
-				confidence: 'confirmed',
-			},
-		})
-		await stores.updateState((state) => {
-			state.credentials.oauth['working:http://127.0.0.1:1'] = {
-				accessToken: 'working-access',
-				refreshToken: 'working-refresh',
-				clientId: 'working-client',
-				tokenType: 'bearer',
-				expiresAt: '2000-01-01T00:00:00.000Z',
-			}
-		})
 		const authentication = new RuntimeAuthentication(stores, {
-			refreshToken: async ({ resourceUrl }) => {
-				if (resourceUrl.includes('/broken/'))
-					throw new Error('OAuth token refresh failed: invalid_grant')
-				return freshToken('rotated-access', 'working-client')
-			},
-			authenticate: async () => {
-				throw new Error('browser authorization failed')
+			authorizeOAuth: async ({ serverName, grants, report }) => {
+				report({ phase: 'refreshing-token', message: 'refreshing OAuth token' })
+				if (serverName === 'broken')
+					throw new Error('browser authorization failed')
+				await grants.update(() => freshGrant('rotated-access'))
 			},
 		})
 		const runtime = runtimeWith(stores, authentication, async () => [
@@ -236,9 +189,6 @@ describe('Runtime authentication', () => {
 		])
 		const messages = progressMessages(caller)
 		expect(messages).toContain('broken: refreshing OAuth token')
-		expect(messages).toContain(
-			'broken: token refresh failed (OAuth token refresh failed: invalid_grant); starting browser authorization',
-		)
 		expect(messages).toContain('working: ok (1 tool)')
 		const state = await stores.readState()
 		expect(state.schemas.servers.broken?.refreshStatus).toMatchObject({
@@ -250,29 +200,29 @@ describe('Runtime authentication', () => {
 	})
 
 	it('silently refreshes an expiring token before an ordinary Call', async () => {
-		const stores = await createStores(oauthTokenServer(), {
-			[TOKEN_KEY]: expiredToken(),
-		})
+		const stores = await createStores(
+			{ fixture: oauthServer() },
+			{ fixture: expiredGrant() },
+		)
 		let refreshes = 0
-		const authorizations: (string | undefined)[] = []
 		const authentication = new RuntimeAuthentication(stores, {
-			refreshToken: async () => {
+			authorizeOAuth: async ({ grants, report, challenge }) => {
+				expect(challenge).toBeUndefined()
 				refreshes += 1
-				return freshToken('rotated-access')
-			},
-			authenticate: async () => {
-				throw new Error('must not open a browser')
+				report({ phase: 'refreshing-token', message: 'refreshing OAuth token' })
+				await grants.update(() => freshGrant('rotated-access'))
 			},
 		})
+		const tokens: (string | undefined)[] = []
 		const runtime = runtimeWith(stores, authentication, undefined, {
-			onConnect: (headers) => authorizations.push(headers?.Authorization),
+			onConnect: (token) => tokens.push(token),
 		})
 		const caller = createInMemoryRuntimeCaller('call')
 
 		await runtime.handle(callIntent('call'), caller)
 
 		expect(refreshes).toBe(1)
-		expect(authorizations).toEqual(['Bearer rotated-access'])
+		expect(tokens).toEqual(['rotated-access'])
 		expect(terminalFrames(caller)[0]).toMatchObject({ kind: 'result' })
 		expect(progressMessages(caller)).toEqual([
 			'fixture: refreshing OAuth token',
@@ -280,22 +230,23 @@ describe('Runtime authentication', () => {
 	})
 
 	it('replaces a rejected credential and retries the Call once', async () => {
-		const stores = await createStores(oauthTokenServer(), {
-			[TOKEN_KEY]: freshToken('revoked-access'),
-		})
-		let refreshes = 0
+		const stores = await createStores(
+			{ fixture: oauthServer() },
+			{ fixture: freshGrant('revoked-access') },
+		)
+		const challenges: unknown[] = []
 		const authentication = new RuntimeAuthentication(stores, {
-			refreshToken: async () => {
-				refreshes += 1
-				return freshToken('rotated-access')
+			authorizeOAuth: async ({ grants, challenge }) => {
+				challenges.push(challenge)
+				await grants.update(() => freshGrant('rotated-access'))
 			},
 		})
 		const attempts: (string | undefined)[] = []
 		const runtime = runtimeWith(stores, authentication, undefined, {
-			onConnect: (headers) => attempts.push(headers?.Authorization),
-			callTool: async (headers) => {
-				if (headers?.Authorization === 'Bearer revoked-access')
-					throw Object.assign(new Error('Unauthorized'), { code: 401 })
+			onConnect: (token) => attempts.push(token),
+			callTool: async (token) => {
+				if (token === 'revoked-access')
+					throw new AuthorizationChallengeError({ status: 401 })
 				return 'ok'
 			},
 		})
@@ -303,8 +254,8 @@ describe('Runtime authentication', () => {
 
 		await runtime.handle(callIntent('call'), caller)
 
-		expect(refreshes).toBe(1)
-		expect(attempts).toEqual(['Bearer revoked-access', 'Bearer rotated-access'])
+		expect(challenges).toEqual([{ status: 401 }])
+		expect(attempts).toEqual(['revoked-access', 'rotated-access'])
 		expect(terminalFrames(caller)).toEqual([
 			{
 				requestId: 'call',
@@ -314,35 +265,109 @@ describe('Runtime authentication', () => {
 		])
 	})
 
-	it('holds a Call until browser authorization completes and reports the URL', async () => {
+	it('discovers OAuth from a 401 challenge on a server declared without auth', async () => {
 		const stores = await createStores({
-			url: 'http://127.0.0.1:1/mcp',
-			auth: {
-				kind: 'oauth',
-				confidence: 'confirmed',
-				authorizationServers: ['http://127.0.0.1:1'],
+			fixture: { url: 'http://127.0.0.1:1/mcp', auth: { kind: 'none' } },
+		})
+		const challenge = {
+			status: 401 as const,
+			resourceMetadataUrl:
+				'http://127.0.0.1:1/.well-known/oauth-protected-resource/mcp',
+			scope: 'mcp:tools',
+		}
+		const seen: AuthorizeOAuthOptions['challenge'][] = []
+		const authentication = new RuntimeAuthentication(stores, {
+			authorizeOAuth: async (options) => {
+				seen.push(options.challenge)
+				options.report({
+					phase: 'awaiting-browser',
+					message: 'authorize in your browser: http://127.0.0.1:1/authorize',
+					url: 'http://127.0.0.1:1/authorize',
+				})
+				await options.grants.update(() => freshGrant('browser-access'))
 			},
 		})
+		const attempts: (string | undefined)[] = []
+		const runtime = runtimeWith(stores, authentication, undefined, {
+			onConnect: (token) => attempts.push(token),
+			callTool: async (token) => {
+				if (!token) throw new AuthorizationChallengeError(challenge)
+				return 'status'
+			},
+		})
+		const caller = createInMemoryRuntimeCaller('call')
+
+		await runtime.handle(callIntent('call'), caller)
+
+		expect(seen).toEqual([challenge])
+		expect(attempts).toEqual([undefined, 'browser-access'])
+		expect(terminalFrames(caller)[0]).toMatchObject({
+			kind: 'result',
+			result: { result: 'status' },
+		})
+		expect(progressMessages(caller)).toEqual([
+			'fixture: authorize in your browser: http://127.0.0.1:1/authorize',
+		])
+		expect((await stores.registry.read()).servers.fixture).toMatchObject({
+			auth: { kind: 'oauth' },
+		})
+	})
+
+	it('reports reauth-required when a bearer credential is challenged', async () => {
+		const stores = await createStores({
+			fixture: {
+				url: 'http://127.0.0.1:1/mcp',
+				auth: {
+					kind: 'bearer',
+					strategy: 'round-robin',
+					confidence: 'configured',
+					credentials: [{ kind: 'stored', key: 'fixture:bearer:0' }],
+				},
+			},
+		})
+		await stores.updateState((state) => {
+			state.credentials.bearer['fixture:bearer:0'] = 'static'
+		})
+		const authentication = new RuntimeAuthentication(stores, {
+			authorizeOAuth: async () => {
+				throw new Error('must not start OAuth')
+			},
+		})
+		const runtime = runtimeWith(stores, authentication, undefined, {
+			callTool: async () => {
+				throw new AuthorizationChallengeError({ status: 401 })
+			},
+		})
+		const caller = createInMemoryRuntimeCaller('call')
+
+		await runtime.handle(callIntent('call'), caller)
+
+		expect(terminalFrames(caller)[0]).toMatchObject({
+			kind: 'error',
+			error: { code: 'reauth-required' },
+		})
+	})
+
+	it('holds a Call until browser authorization completes and reports the URL', async () => {
+		const stores = await createStores({ fixture: oauthServer() })
 		let approve = () => {}
 		const authentication = new RuntimeAuthentication(stores, {
-			authenticate: async (_name, _url, _auth, _signal, _manual, onUrl) => {
-				onUrl?.('http://127.0.0.1:1/authorize?state=fixture')
+			authorizeOAuth: async ({ grants, report }) => {
+				report({
+					phase: 'awaiting-browser',
+					message:
+						'authorize in your browser (waiting up to 5 minutes): http://127.0.0.1:1/authorize?state=fixture',
+					url: 'http://127.0.0.1:1/authorize?state=fixture',
+				})
 				await new Promise<void>((resolve) => {
 					approve = resolve
 				})
-				return {
-					auth: {
-						kind: 'oauth-token',
-						tokenKey: TOKEN_KEY,
-						confidence: 'confirmed',
-					},
-					token: freshToken('browser-access'),
-				}
+				await grants.update(() => freshGrant('browser-access'))
 			},
 		})
-		const authorizations: (string | undefined)[] = []
+		const tokens: (string | undefined)[] = []
 		const runtime = runtimeWith(stores, authentication, undefined, {
-			onConnect: (headers) => authorizations.push(headers?.Authorization),
+			onConnect: (token) => tokens.push(token),
 		})
 		const first = createInMemoryRuntimeCaller('first')
 		const late = createInMemoryRuntimeCaller('late')
@@ -362,29 +387,14 @@ describe('Runtime authentication', () => {
 		expect(progressMessages(late)).toEqual([expected])
 		expect(terminalFrames(first)[0]).toMatchObject({ kind: 'result' })
 		expect(terminalFrames(late)[0]).toMatchObject({ kind: 'result' })
-		expect(authorizations).toEqual(['Bearer browser-access'])
-		expect((await stores.readState()).registry.servers.fixture).toMatchObject({
-			auth: { kind: 'oauth-token', tokenKey: TOKEN_KEY },
-		})
+		expect(tokens).toEqual(['browser-access'])
 	})
 
 	it('fails fast when manual OAuth client input has no terminal', async () => {
-		const stores = await createStores({
-			url: 'http://127.0.0.1:1/mcp',
-			auth: {
-				kind: 'oauth',
-				confidence: 'confirmed',
-				authorizationServers: ['http://127.0.0.1:1'],
-			},
-		})
+		const stores = await createStores({ fixture: oauthServer() })
 		const authentication = new RuntimeAuthentication(stores, {
-			authenticate: async (_name, _url, _auth, _signal, manualClient) => {
-				await manualClient?.({
-					serverName: 'fixture',
-					redirectUri: 'http://127.0.0.1:65245/callback',
-					issuer: 'http://127.0.0.1:1',
-					scopes: [],
-				})
+			authorizeOAuth: async ({ requestManualClient }) => {
+				await requestManualClient(manualRequest())
 				throw new Error('unreachable')
 			},
 		})
@@ -412,48 +422,25 @@ describe('Runtime authentication', () => {
 		])
 	})
 
-	it('requests manual OAuth client input from the CLI caller and persists it in Runtime state', async () => {
-		const stores = await createStores({
-			url: 'http://127.0.0.1:1/mcp',
-			auth: {
-				kind: 'oauth',
-				confidence: 'confirmed',
-				authorizationServers: ['http://127.0.0.1:1'],
-			},
-		})
-		let inputRequests = 0
+	it('requests manual OAuth client input from the CLI caller', async () => {
+		const stores = await createStores({ fixture: oauthServer() })
+		const requests: unknown[] = []
 		const authentication = new RuntimeAuthentication(stores, {
-			authenticate: async (_name, _url, _auth, _signal, manualClient) => {
-				const client = await manualClient?.({
-					serverName: 'fixture',
-					redirectUri: 'http://127.0.0.1:65245/callback',
-					issuer: 'http://127.0.0.1:1',
-					scopes: ['scope:read'],
+			authorizeOAuth: async ({ requestManualClient, grants }) => {
+				const client = await requestManualClient(manualRequest())
+				expect(client).toEqual({
+					clientId: 'local-client',
+					clientSecret: 'local-secret',
 				})
-				if (!client) throw new Error('Missing manual client.')
-				return {
-					auth: {
-						kind: 'oauth-token',
-						tokenKey: 'fixture:issuer',
-						confidence: 'confirmed',
-					},
-					token: {
-						accessToken: 'local-access',
-						tokenType: 'bearer',
-						clientId: client.clientId,
-						clientSecretKey: client.clientSecretKey,
-					},
-					clientSecret: client.clientSecret,
-				}
+				await grants.update(() => freshGrant('local-access'))
 			},
 		})
 		const runtime = new McpRuntime(stores, { authentication })
 		const caller = {
 			...createInMemoryRuntimeCaller('manual'),
-			requestInput: async (request: { type: string }) => {
-				inputRequests += 1
-				expect(request.type).toBe('oauth-client')
-				return { clientId: 'local-client', clientSecret: 'local-secret' }
+			requestInput: async (request: unknown) => {
+				requests.push(request)
+				return { clientId: ' local-client ', clientSecret: 'local-secret' }
 			},
 		}
 
@@ -462,51 +449,17 @@ describe('Runtime authentication', () => {
 			caller,
 		)
 
-		expect(inputRequests).toBe(1)
-		const state = await stores.readState()
-		expect(state.credentials.oauth['fixture:issuer']?.clientId).toBe(
-			'local-client',
-		)
-		expect(
-			state.credentials.oauthClientSecrets['oauth-client:local-client'],
-		).toBe('local-secret')
-		expect(state.registry.servers.fixture).toMatchObject({
-			auth: { kind: 'oauth-token' },
-		})
+		expect(requests).toEqual([{ type: 'oauth-client', ...manualRequest() }])
 	})
 
 	it('moves manual OAuth input to a surviving waiter after the first caller disconnects', async () => {
-		const stores = await createStores({
-			url: 'http://127.0.0.1:1/mcp',
-			auth: {
-				kind: 'oauth',
-				confidence: 'confirmed',
-				authorizationServers: ['http://127.0.0.1:1'],
-			},
-		})
+		const stores = await createStores({ fixture: oauthServer() })
 		let firstPrompted = false
 		let secondPrompted = false
 		const authentication = new RuntimeAuthentication(stores, {
-			authenticate: async (_name, _url, _auth, _signal, manualClient) => {
-				const client = await manualClient?.({
-					serverName: 'fixture',
-					redirectUri: 'http://127.0.0.1:65245/callback',
-					issuer: 'http://127.0.0.1:1',
-					scopes: [],
-				})
-				if (!client) throw new Error('Missing manual client.')
-				return {
-					auth: {
-						kind: 'oauth-token',
-						tokenKey: 'fixture:issuer',
-						confidence: 'confirmed',
-					},
-					token: {
-						accessToken: 'local-access',
-						tokenType: 'bearer',
-						clientId: client.clientId,
-					},
-				}
+			authorizeOAuth: async ({ requestManualClient, grants }) => {
+				await requestManualClient(manualRequest())
+				await grants.update(() => freshGrant('local-access'))
 			},
 		})
 		const firstBase = createInMemoryRuntimeCaller('first-input')
@@ -538,50 +491,64 @@ describe('Runtime authentication', () => {
 	})
 
 	async function createStores(
-		server: Record<string, unknown>,
-		oauth: Record<string, unknown> = {},
-		name = 'fixture',
+		declared: Record<string, DeclaredServer>,
+		oauth: Record<string, OAuthGrant> = {},
 	) {
 		const root = await fs.mkdtemp(path.join(tmpdir(), 'mcpx-runtime-auth-'))
 		roots.push(root)
-		await fs.writeFile(
-			path.join(root, 'servers.json'),
-			JSON.stringify({ version: 1, servers: { [name]: server } }),
-		)
-		await fs.writeFile(
-			path.join(root, 'tokens.json'),
-			JSON.stringify({ version: 1, oauth, oauthClientSecrets: {} }),
-		)
-		return openRuntimeStores(root)
+		const stores = await openRuntimeStores(root)
+		await stores.updateState((state) => {
+			Object.assign(state.registry.servers, declared)
+			Object.assign(state.credentials.oauth, oauth)
+		})
+		return stores
 	}
 })
 
-const TOKEN_KEY = 'fixture:http://127.0.0.1:1'
+function oauthServer(url = 'http://127.0.0.1:1/mcp'): DeclaredServer {
+	return { url, auth: { kind: 'oauth' } }
+}
 
-function oauthTokenServer() {
+function expiredGrant(): OAuthGrant {
 	return {
-		url: 'http://127.0.0.1:1/mcp',
-		auth: { kind: 'oauth-token', tokenKey: TOKEN_KEY, confidence: 'confirmed' },
+		client: {
+			registration: 'dynamic',
+			information: { client_id: 'fixture-client' },
+		},
+		tokens: {
+			value: {
+				access_token: 'expired-access',
+				refresh_token: 'refresh-1',
+				token_type: 'bearer',
+			},
+			expiresAt: '2000-01-01T00:00:00.000Z',
+		},
 	}
 }
 
-function expiredToken() {
+function freshGrant(accessToken: string): OAuthGrant {
 	return {
-		accessToken: 'expired-access',
-		refreshToken: 'refresh-1',
-		clientId: 'fixture-client',
-		tokenType: 'bearer',
-		expiresAt: '2000-01-01T00:00:00.000Z',
+		client: {
+			registration: 'dynamic',
+			information: { client_id: 'fixture-client' },
+		},
+		tokens: {
+			value: {
+				access_token: accessToken,
+				refresh_token: 'refresh-2',
+				token_type: 'bearer',
+			},
+			expiresAt: new Date(Date.now() + 3_600_000).toISOString(),
+		},
 	}
 }
 
-function freshToken(accessToken: string, clientId = 'fixture-client') {
+function manualRequest() {
 	return {
-		accessToken,
-		refreshToken: 'refresh-2',
-		clientId,
-		tokenType: 'bearer',
-		expiresAt: new Date(Date.now() + 3_600_000).toISOString(),
+		serverName: 'fixture',
+		redirectUri: 'http://127.0.0.1:65245/callback',
+		issuer: 'http://127.0.0.1:1',
+		scopes: [],
 	}
 }
 
@@ -600,19 +567,18 @@ function runtimeWith(
 	authentication: RuntimeAuthentication,
 	listTools: () => Promise<unknown[]> = async () => [],
 	options: {
-		onConnect?: (headers: Record<string, string> | undefined) => void
-		callTool?: (headers: Record<string, string> | undefined) => Promise<unknown>
+		onConnect?: (token: string | undefined) => void
+		callTool?: (token: string | undefined) => Promise<unknown>
 	} = {},
 ): McpRuntime {
 	const sessions = new RuntimeSessionPool(stores, {
 		authentication,
 		connect: async (_server, connectOptions) => {
-			const headers = connectOptions?.headers
-			options.onConnect?.(headers)
+			let token = connectOptions?.token
+			options.onConnect?.(token)
 			const connection: McpConnection = {
 				client: {
-					callTool: async () =>
-						(options.callTool ?? (async () => 'ok'))(headers),
+					callTool: async () => (options.callTool ?? (async () => 'ok'))(token),
 					listTools: async () => ({ tools: await listTools() }),
 				} as unknown as McpConnection['client'],
 				close: async () => {},
@@ -620,6 +586,9 @@ function runtimeWith(
 				stderr: null,
 				sessionId: () => undefined,
 				updateHeaders: () => {},
+				updateToken: (next) => {
+					token = next
+				},
 			}
 			return connection
 		},
