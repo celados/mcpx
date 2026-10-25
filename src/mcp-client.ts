@@ -1,10 +1,17 @@
-import type { RequestOptions } from '@modelcontextprotocol/sdk/shared/protocol.js'
+import type { AuthProvider, RequestOptions } from '@modelcontextprotocol/client'
 import type { Stream } from 'node:stream'
 
-import { Client } from '@modelcontextprotocol/sdk/client/index.js'
-import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js'
-import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js'
+import {
+	Client,
+	extractWWWAuthenticateParams,
+	InsufficientScopeError,
+	SdkHttpError,
+	StreamableHTTPClientTransport,
+	UnauthorizedError,
+} from '@modelcontextprotocol/client'
+import { StdioClientTransport } from '@modelcontextprotocol/client/stdio'
 
+import type { OAuthChallenge } from './oauth'
 import type { McpTool, ServerConfig, ToolAnnotations } from './types'
 
 import { resolveHeaders } from './headers'
@@ -36,10 +43,13 @@ export type McpConnection = {
 	stderr: Stream | null
 	sessionId: () => string | undefined
 	updateHeaders: (headers: Record<string, string>) => void
+	/** The bearer token sent with every later request; `undefined` sends none. */
+	updateToken: (token: string | undefined) => void
 }
 
 export type ConnectMcpClientOptions = {
 	headers?: Record<string, string> | undefined
+	token?: string | undefined
 	sessionId?: string | undefined
 	onNotification?: (notification: { method: string; params?: unknown }) => void
 }
@@ -71,12 +81,13 @@ export async function connectMcpClient(
 		server.transport === 'stdio'
 			? undefined
 			: (options.headers ?? (await resolveHeaders(server)))
+	let token = options.token
 	const transport =
 		server.transport === 'stdio'
 			? new StdioClientTransport(stdioTransportParams(server))
 			: new StreamableHTTPClientTransport(
 					new URL(server.url),
-					httpTransportOptions(httpHeaders, options),
+					httpTransportOptions(httpHeaders, options, () => token),
 				)
 
 	await client.connect(transport as never)
@@ -103,16 +114,77 @@ export async function connectMcpClient(
 			for (const key of Object.keys(httpHeaders)) delete httpHeaders[key]
 			Object.assign(httpHeaders, headers)
 		},
+		updateToken: (next) => {
+			token = next
+		},
+	}
+}
+
+/**
+ * Rejection of a request by the resource server's auth layer. The Runtime, not
+ * the transport, owns what happens next: the challenge is the discovery entry
+ * for OAuth at any time, not only when a server is added.
+ */
+export class AuthorizationChallengeError extends Error {
+	readonly challenge: OAuthChallenge
+
+	constructor(challenge: OAuthChallenge) {
+		super(
+			challenge.status === 401
+				? 'Unauthorized'
+				: `Insufficient scope${challenge.scope ? `: required "${challenge.scope}"` : ''}`,
+		)
+		this.name = 'AuthorizationChallengeError'
+		this.challenge = challenge
+	}
+}
+
+export function authorizationChallenge(
+	error: unknown,
+): OAuthChallenge | undefined {
+	if (error instanceof AuthorizationChallengeError) return error.challenge
+	if (error instanceof InsufficientScopeError) {
+		const challenge: OAuthChallenge = { status: 403 }
+		if (error.requiredScope) challenge.scope = error.requiredScope
+		if (error.resourceMetadataUrl)
+			challenge.resourceMetadataUrl = error.resourceMetadataUrl.toString()
+		return challenge
+	}
+	if (error instanceof UnauthorizedError) return { status: 401 }
+	if (error instanceof SdkHttpError && error.status === 401)
+		return { status: 401 }
+	return undefined
+}
+
+// The transport asks for the token before every request and reports a 401
+// here instead of running the SDK's own OAuth flow inside the request.
+function challengeAuthProvider(token: () => string | undefined): AuthProvider {
+	return {
+		token: async () => token(),
+		onUnauthorized: async ({ response }) => {
+			const { resourceMetadataUrl, scope } =
+				extractWWWAuthenticateParams(response)
+			const challenge: OAuthChallenge = { status: 401 }
+			if (resourceMetadataUrl)
+				challenge.resourceMetadataUrl = resourceMetadataUrl.toString()
+			if (scope) challenge.scope = scope
+			throw new AuthorizationChallengeError(challenge)
+		},
 	}
 }
 
 function httpTransportOptions(
 	headers: Record<string, string> | undefined,
 	options: ConnectMcpClientOptions,
+	token: () => string | undefined,
 ): ConstructorParameters<typeof StreamableHTTPClientTransport>[1] {
 	const transportOptions: NonNullable<
 		ConstructorParameters<typeof StreamableHTTPClientTransport>[1]
-	> = {}
+	> = {
+		authProvider: challengeAuthProvider(token),
+		// A 403 step-up is an Authentication Flow the Runtime coordinates.
+		onInsufficientScope: 'throw',
+	}
 	if (headers) transportOptions.requestInit = { headers }
 	if (options.sessionId) transportOptions.sessionId = options.sessionId
 	return transportOptions
@@ -175,7 +247,6 @@ export async function callMcpTool(
 	return withMcpClient(server, async (client) =>
 		client.callTool(
 			{ name: toolName, arguments: input },
-			undefined,
 			toolCallRequestOptions(),
 		),
 	)

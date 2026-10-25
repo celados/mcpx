@@ -6,6 +6,8 @@ import path from 'node:path'
 import type { McpConnection } from '../src/mcp-client'
 import type { ServerConfig } from '../src/types'
 
+import { AuthorizationChallengeError } from '../src/mcp-client'
+import { RuntimeAuthentication } from '../src/runtime-authentication'
 import { RuntimeCall } from '../src/runtime-call'
 import { createInMemoryRuntimeCaller } from '../src/runtime-caller'
 import { RuntimeSessionPool } from '../src/runtime-session-pool'
@@ -46,12 +48,14 @@ describe('Runtime session pool', () => {
 		})
 		let connectedServer: ServerConfig | undefined
 		let connectedHeaders: Record<string, string> | undefined
+		let connectedToken: string | undefined
 		let receivedSignal: AbortSignal | undefined
 		const pool = new RuntimeSessionPool(stores, {
 			connect: async (server, options) => {
 				connectedServer = server
 				connectedHeaders = options?.headers
-				return fakeConnection(async (_params, _schema, requestOptions) => {
+				connectedToken = options?.token
+				return fakeConnection(async (_params, requestOptions) => {
 					receivedSignal = requestOptions?.signal
 					return 'ok'
 				})
@@ -72,9 +76,9 @@ describe('Runtime session pool', () => {
 		})
 		expect(connectedHeaders).toEqual({
 			Accept: 'application/json, text/event-stream',
-			Authorization: 'Bearer bearer-secret',
 			'x-api-key': 'header-secret',
 		})
+		expect(connectedToken).toBe('bearer-secret')
 		expect(receivedSignal).toBe(call.signal)
 		expect(JSON.stringify(caller.frames)).not.toContain('secret')
 	})
@@ -90,7 +94,7 @@ describe('Runtime session pool', () => {
 		const pool = new RuntimeSessionPool(stores, {
 			connect: async () => {
 				connectCount += 1
-				return fakeConnection(async (params, _schema, options) => {
+				return fakeConnection(async (params, options) => {
 					upstreamCalls.push(params.name)
 					if (params.name === 'hold') {
 						return new Promise((_resolve, reject) => {
@@ -140,17 +144,24 @@ describe('Runtime session pool', () => {
 		})
 	})
 
-	it('maps 401 to reauth-required without starting authentication', async () => {
+	it('authorizes from a 401 challenge and reports reauth-required when it fails', async () => {
 		const stores = await createStores({
 			url: 'http://127.0.0.1:1/mcp',
 			auth: { kind: 'none' },
 		})
 		let closed = 0
+		const challenges: unknown[] = []
 		const pool = new RuntimeSessionPool(stores, {
+			authentication: new RuntimeAuthentication(stores, {
+				authorizeOAuth: async ({ challenge }) => {
+					challenges.push(challenge)
+					throw new Error('no OAuth metadata')
+				},
+			}),
 			connect: async () =>
 				fakeConnection(
 					async () => {
-						throw new Error('HTTP 401 Unauthorized')
+						throw new AuthorizationChallengeError({ status: 401 })
 					},
 					() => closed++,
 				),
@@ -169,10 +180,12 @@ describe('Runtime session pool', () => {
 				kind: 'error',
 				error: {
 					code: 'reauth-required',
-					message: 'Credentials for fixture must be refreshed.',
+					message:
+						'Credentials for fixture must be refreshed: no OAuth metadata',
 				},
 			},
 		])
+		expect(challenges).toEqual([{ status: 401 }])
 		expect(closed).toBe(1)
 	})
 
@@ -197,15 +210,15 @@ describe('Runtime session pool', () => {
 		const observed: string[] = []
 		const pool = new RuntimeSessionPool(stores, {
 			connect: async (_server, options) => {
-				authorization = options?.headers?.Authorization ?? ''
+				authorization = options?.token ?? ''
 				return {
 					...fakeConnection(async (params) => {
 						observed.push(`${params.name}:${authorization}`)
 						if (params.name === 'first') await firstBlocked
 						return 'ok'
 					}),
-					updateHeaders: (headers) => {
-						authorization = headers.Authorization ?? ''
+					updateToken: (token) => {
+						authorization = token ?? ''
 					},
 				}
 			},
@@ -228,10 +241,10 @@ describe('Runtime session pool', () => {
 			},
 		)
 		await Bun.sleep(5)
-		expect(observed).toEqual(['first:Bearer token-a'])
+		expect(observed).toEqual(['first:token-a'])
 		releaseFirst()
 		await Promise.all([first, second])
-		expect(observed).toEqual(['first:Bearer token-a', 'second:Bearer token-b'])
+		expect(observed).toEqual(['first:token-a', 'second:token-b'])
 	})
 
 	it('owns the timeout cause instead of inferring it from the SDK error', async () => {
@@ -245,7 +258,7 @@ describe('Runtime session pool', () => {
 			const pool = new RuntimeSessionPool(stores, {
 				connect: async () =>
 					fakeConnection(
-						async (_params, _schema, options) =>
+						async (_params, options) =>
 							new Promise((_resolve, reject) => {
 								options?.signal?.addEventListener(
 									'abort',
@@ -361,7 +374,7 @@ describe('Runtime session pool', () => {
 		const pool = new RuntimeSessionPool(stores, {
 			connect: async () =>
 				fakeConnection(
-					async (_params, _schema, options) =>
+					async (_params, options) =>
 						new Promise((_resolve, reject) => {
 							options?.signal?.addEventListener(
 								'abort',
@@ -702,6 +715,7 @@ function fakeConnection(
 		stderr: null,
 		sessionId: () => 'fixture-session',
 		updateHeaders: () => {},
+		updateToken: () => {},
 	}
 }
 

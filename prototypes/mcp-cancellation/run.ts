@@ -1,6 +1,8 @@
-import { Client } from '@modelcontextprotocol/sdk/client/index.js'
-import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js'
-import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js'
+import {
+	Client,
+	StreamableHTTPClientTransport,
+} from '@modelcontextprotocol/client'
+import { StdioClientTransport } from '@modelcontextprotocol/client/stdio'
 import fs from 'node:fs/promises'
 import path from 'node:path'
 import { createInterface } from 'node:readline/promises'
@@ -107,7 +109,7 @@ async function runMatrix(): Promise<Evidence> {
 	const sdkPackage = await Bun.file(
 		path.join(
 			prototypeDir,
-			'../../node_modules/@modelcontextprotocol/sdk/package.json',
+			'../../node_modules/@modelcontextprotocol/client/package.json',
 		),
 	).json()
 	const transports = await Promise.all([
@@ -120,7 +122,7 @@ async function runMatrix(): Promise<Evidence> {
 		runtime: {
 			bun: Bun.version,
 			sdk: sdkPackage.version,
-			sdkLock: '@modelcontextprotocol/sdk@1.29.0',
+			sdkLock: `@modelcontextprotocol/client@${sdkPackage.version}`,
 		},
 		abortReason,
 		transports,
@@ -157,7 +159,6 @@ async function runScenario(
 	const startedAt = performance.now()
 	const promise = fixture.client.callTool(
 		{ name: 'controlled', arguments: { scenario } },
-		undefined,
 		{ signal: controller.signal, timeout: 1_000 },
 	)
 
@@ -213,7 +214,6 @@ async function settle(
 async function echo(client: Client): Promise<string> {
 	const result = await client.callTool(
 		{ name: 'echo', arguments: {} },
-		undefined,
 		{ timeout: 1_000 },
 	)
 	return resultText(result)

@@ -46,6 +46,18 @@ describe('Runtime state stores', () => {
 						command: 'fixture-command',
 						env: { FIXTURE_SECRET: 'stdio-secret' },
 					},
+					manual: {
+						url: 'https://manual.example/mcp',
+						auth: {
+							kind: 'oauth-token',
+							tokenKey: 'manual:https://manual.example',
+							confidence: 'confirmed',
+						},
+					},
+					guessed: {
+						url: 'https://guessed.example/mcp',
+						auth: { kind: 'unknown', reason: '401 without metadata' },
+					},
 				},
 			}),
 		)
@@ -54,12 +66,17 @@ describe('Runtime state stores', () => {
 			JSON.stringify({
 				version: 1,
 				oauth: {
-					'fixture:issuer': {
+					'manual:https://manual.example': {
 						accessToken: 'oauth-secret',
-						tokenType: 'bearer',
+						tokenType: 'user',
+						clientId: 'manual-client',
+						clientSecretKey: 'oauth-client:manual-client',
+						refreshToken: 'refresh-secret',
+						expiresAt: '2026-08-03T00:00:00.000Z',
 					},
+					'orphan:issuer': { accessToken: 'orphan', tokenType: 'bearer' },
 				},
-				oauthClientSecrets: { fixture: 'client-secret' },
+				oauthClientSecrets: { 'oauth-client:manual-client': 'client-secret' },
 			}),
 		)
 
@@ -81,17 +98,32 @@ describe('Runtime state stores', () => {
 					},
 				},
 				stdio: { transport: 'stdio', command: 'fixture-command' },
+				manual: { url: 'https://manual.example/mcp', auth: { kind: 'oauth' } },
+				guessed: { url: 'https://guessed.example/mcp', auth: { kind: 'none' } },
 			},
 		})
 		expect(await stores.credentials.read()).toEqual({
-			version: 2,
+			version: 3,
 			oauth: {
-				'fixture:issuer': {
-					accessToken: 'oauth-secret',
-					tokenType: 'bearer',
+				manual: {
+					client: {
+						registration: 'manual',
+						redirectUri: 'http://127.0.0.1:65245/callback',
+						information: {
+							client_id: 'manual-client',
+							client_secret: 'client-secret',
+						},
+					},
+					tokens: {
+						value: {
+							access_token: 'oauth-secret',
+							token_type: 'user',
+							refresh_token: 'refresh-secret',
+						},
+						expiresAt: '2026-08-03T00:00:00.000Z',
+					},
 				},
 			},
-			oauthClientSecrets: { fixture: 'client-secret' },
 			bearer: { 'fixture:bearer:0': 'bearer-secret' },
 			headers: { fixture: { 'x-api-key': 'header-secret' } },
 			stdioEnv: { stdio: { FIXTURE_SECRET: 'stdio-secret' } },
@@ -142,43 +174,32 @@ describe('Runtime state stores', () => {
 		)
 	})
 
-	it('retains shared OAuth material until its final declaration is removed', async () => {
+	it('drops an OAuth grant with its declaration and on re-add', async () => {
 		const root = await fs.mkdtemp(path.join(tmpdir(), 'mcpx-runtime-stores-'))
 		roots.push(root)
 		const stores = await openRuntimeStores(root)
+		const grant = {
+			tokens: { value: { access_token: 'secret', token_type: 'Bearer' } },
+		}
 		await stores.updateState((state) => {
-			state.registry.servers.first = {
-				url: 'http://127.0.0.1:1/mcp',
-				auth: {
-					kind: 'oauth-token',
-					tokenKey: 'shared',
-					confidence: 'confirmed',
-				},
+			for (const name of ['first', 'second']) {
+				state.registry.servers[name] = {
+					url: 'http://127.0.0.1:1/mcp',
+					auth: { kind: 'oauth' },
+				}
+				state.credentials.oauth[name] = grant
 			}
-			state.registry.servers.second = {
-				url: 'http://127.0.0.1:1/mcp',
-				auth: {
-					kind: 'oauth-token',
-					tokenKey: 'shared',
-					confidence: 'confirmed',
-				},
-			}
-			state.credentials.oauth.shared = {
-				accessToken: 'shared-secret',
-				tokenType: 'bearer',
-				clientId: 'client',
-				clientSecretKey: 'client-secret-key',
-			}
-			state.credentials.oauthClientSecrets['client-secret-key'] =
-				'client-secret'
 		})
 
-		await stores.removeServers(['first'])
-		expect((await stores.credentials.read()).oauth.shared).toBeDefined()
-		await stores.removeServers(['second'])
-		const credentials = await stores.credentials.read()
-		expect(credentials.oauth.shared).toBeUndefined()
-		expect(credentials.oauthClientSecrets['client-secret-key']).toBeUndefined()
+		expect(await stores.removeServers(['first'])).toEqual([
+			{ name: 'first', tokenRemoved: true },
+		])
+		expect((await stores.credentials.read()).oauth).toEqual({ second: grant })
+		await stores.upsertServer('second', {
+			url: 'http://127.0.0.1:1/mcp',
+			auth: { kind: 'oauth' },
+		})
+		expect((await stores.credentials.read()).oauth).toEqual({})
 	})
 
 	it('reopens the published state without reviving a legacy registry', async () => {

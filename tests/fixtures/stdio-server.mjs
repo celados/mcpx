@@ -1,5 +1,6 @@
-import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js'
-import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js'
+import { McpServer } from '@modelcontextprotocol/server'
+import { StdioServerTransport } from '@modelcontextprotocol/server/stdio'
+import { z } from 'zod'
 
 const server = new McpServer({ name: 'mcpx-stdio-fixture', version: '1.0.0' })
 let counter = 0
@@ -9,7 +10,7 @@ server.registerTool(
 	{
 		title: 'Echo',
 		description: 'Echo a fixed response',
-		inputSchema: {},
+		inputSchema: z.object({}),
 	},
 	async () => ({
 		content: [{ type: 'text', text: 'ok' }],
@@ -21,7 +22,7 @@ server.registerTool(
 	{
 		title: 'PID',
 		description: 'Return the fixture process id',
-		inputSchema: {},
+		inputSchema: z.object({}),
 	},
 	async () => ({
 		content: [{ type: 'text', text: String(process.pid) }],
@@ -33,7 +34,7 @@ server.registerTool(
 	{
 		title: 'CWD',
 		description: 'Return the fixture process working directory',
-		inputSchema: {},
+		inputSchema: z.object({}),
 	},
 	async () => ({
 		content: [{ type: 'text', text: process.cwd() }],
@@ -45,7 +46,7 @@ server.registerTool(
 	{
 		title: 'Increment',
 		description: 'Increment in-process state',
-		inputSchema: {},
+		inputSchema: z.object({}),
 	},
 	async () => {
 		counter += 1
@@ -60,7 +61,7 @@ server.registerTool(
 	{
 		title: 'Slow',
 		description: 'Return after a short delay',
-		inputSchema: {},
+		inputSchema: z.object({}),
 	},
 	async () => {
 		await new Promise((resolve) => setTimeout(resolve, 100))

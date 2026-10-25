@@ -27,11 +27,15 @@ The durable, sensitive authorization material that lets MCPX act for the user wi
 _Avoid_: Auth config, token registry
 
 **Credential Identity**:
-The stable authorization identity shared by every server declaration and call that must use the same grant.
+The stable authorization identity shared by every server declaration and call that must use the same grant. An OAuth grant belongs to one server declaration, so its Credential Identity is the server name.
 _Avoid_: Server key, access token, session ID
 
+**Authorization Challenge**:
+A resource server's `401` or `403 insufficient_scope` answer with its `WWW-Authenticate` parameters. It is the only evidence that a server needs OAuth, and it can arrive on any request, not only when the server is added.
+_Avoid_: Auth probe, auth discovery result
+
 **Authentication Flow**:
-One shared attempt to make a Credential Identity usable: a silent token refresh when possible, otherwise browser authorization. Calls and `@refresh` join the same flow and wait for its outcome.
+One shared attempt to make a Credential Identity usable: a silent token refresh when possible, otherwise browser authorization. Calls and `@refresh` join the same flow and wait for its outcome; an Authorization Challenge starts or joins it too.
 _Avoid_: Per-command login, token retry
 
 **Caller Input**:

@@ -1,5 +1,5 @@
-import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js'
-import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js'
+import { McpServer } from '@modelcontextprotocol/server'
+import { StdioServerTransport } from '@modelcontextprotocol/server/stdio'
 import { z } from 'zod'
 
 const server = new McpServer({
@@ -12,16 +12,16 @@ server.registerTool(
 	{
 		title: 'Progress Stream',
 		description: 'Emit a configurable number of progress notifications',
-		inputSchema: {
+		inputSchema: z.object({
 			count: z.number().int().min(0).max(20).default(4),
-		},
+		}),
 	},
-	async (args, extra) => {
+	async (args, ctx) => {
 		for (let index = 1; index <= args.count; index += 1) {
-			await extra.sendNotification({
+			await ctx.mcpReq.notify({
 				method: 'notifications/progress',
 				params: {
-					progressToken: extra.requestId,
+					progressToken: ctx.mcpReq.id,
 					progress: index,
 					total: args.count,
 					message: `step ${index}`,
@@ -38,10 +38,10 @@ server.registerTool(
 	{
 		title: 'Notify Tools Changed',
 		description: 'Emit notifications/tools/list_changed during the call',
-		inputSchema: {},
+		inputSchema: z.object({}),
 	},
-	async (_args, extra) => {
-		await extra.sendNotification({ method: 'notifications/tools/list_changed' })
+	async (_args, ctx) => {
+		await ctx.mcpReq.notify({ method: 'notifications/tools/list_changed' })
 		return result('notify-tools-changed')
 	},
 )
@@ -51,10 +51,10 @@ server.registerTool(
 	{
 		title: 'Verbatim Notify',
 		description: 'Emit an unknown notification method for passthrough checks',
-		inputSchema: {},
+		inputSchema: z.object({}),
 	},
-	async (_args, extra) => {
-		await extra.sendNotification({
+	async (_args, ctx) => {
+		await ctx.mcpReq.notify({
 			method: 'notifications/custom/event',
 			params: { source: 'notification-fixture', ok: true },
 		})
@@ -67,12 +67,12 @@ server.registerTool(
 	{
 		title: 'Flood Notify',
 		description: 'Emit enough notifications to trigger daemon truncation',
-		inputSchema: {},
+		inputSchema: z.object({}),
 	},
-	async (_args, extra) => {
+	async (_args, ctx) => {
 		const payload = 'x'.repeat(1_024)
 		for (let index = 0; index < 120; index += 1) {
-			await extra.sendNotification({
+			await ctx.mcpReq.notify({
 				method: 'notifications/custom/flood',
 				params: { index, payload },
 			})
@@ -86,7 +86,7 @@ server.registerTool(
 	{
 		title: 'Idle Tools Changed',
 		description: 'Emit tools/list_changed after the current call has completed',
-		inputSchema: {},
+		inputSchema: z.object({}),
 	},
 	async () => {
 		setTimeout(() => {

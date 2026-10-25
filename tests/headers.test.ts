@@ -3,21 +3,9 @@ import { describe, expect, it } from 'bun:test'
 import type { HttpServerConfig } from '../src/types'
 
 import { authFromBearerValues } from '../src/bearer'
-import { normalizeAuthScheme, resolveProbeHeaders } from '../src/headers'
+import { resolveHeaders } from '../src/headers'
 
 describe('headers', () => {
-	it('canonicalizes bearer token auth scheme', () => {
-		expect(normalizeAuthScheme('bearer')).toBe('Bearer')
-		expect(normalizeAuthScheme('Bearer')).toBe('Bearer')
-		expect(normalizeAuthScheme('BEARER')).toBe('Bearer')
-		expect(normalizeAuthScheme('user')).toBe('Bearer')
-		expect(normalizeAuthScheme('bot')).toBe('Bearer')
-	})
-
-	it('keeps non-bearer token auth schemes unchanged', () => {
-		expect(normalizeAuthScheme('DPoP')).toBe('DPoP')
-	})
-
 	it('parses literal and referenced bearer credentials', () => {
 		expect(
 			authFromBearerValues([
@@ -37,13 +25,13 @@ describe('headers', () => {
 		})
 	})
 
-	it('fails fast when a bearer env reference is missing', () => {
+	it('fails fast when a bearer env reference is missing', async () => {
 		const previous = process.env.MISSING_MCPX_TEST_TOKEN
 		delete process.env.MISSING_MCPX_TEST_TOKEN
 		const server = bearerServer(['env:MISSING_MCPX_TEST_TOKEN'])
 
 		try {
-			expect(() => resolveProbeHeaders(server)).toThrow(
+			await expect(resolveHeaders(server)).rejects.toThrow(
 				/MISSING_MCPX_TEST_TOKEN/,
 			)
 		} finally {

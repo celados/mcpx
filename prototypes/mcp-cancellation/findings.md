@@ -18,6 +18,16 @@ description: Observed SDK 1.29.0 cancellation behavior and a proposed MCPX adapt
 - Raw observations: `evidence.json`.
 - Reproduction: `bun run prototype:cancellation:evidence`.
 
+### Re-run on SDK v2
+
+`evidence.json` now records Bun `1.4.2` with `@modelcontextprotocol/client@2.4.0`.
+Every verdict below holds. Two observations differ: an aborted call rejects with
+`SdkError` (`REQUEST_TIMEOUT`) instead of `McpError` `-32001` — MCPX already
+owns the cancellation cause rather than inferring it from the SDK error — and
+`complete-before-cancel` no longer sends a stray `notifications/cancelled` for
+a request that already completed. The v1 source references below are kept as
+the original evidence.
+
 The fixture deliberately controls both compliant and adversarial server
 outcomes. SDK implementation checks use the installed files at:
 

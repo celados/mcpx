@@ -2,9 +2,9 @@ import { randomUUID } from 'node:crypto'
 import fs from 'node:fs/promises'
 import path from 'node:path'
 
+import type { OAuthGrant } from './oauth'
 import type {
 	HttpServerConfig,
-	OAuthToken,
 	RegistryConfig,
 	ServerConfig,
 	ServerRefreshStatus,
@@ -55,9 +55,12 @@ export type DeclaredRegistry = {
 }
 
 export type CredentialState = {
-	version: 2
-	oauth: Record<string, OAuthToken>
-	oauthClientSecrets: Record<string, string>
+	version: 3
+	/**
+	 * OAuth grants keyed by server name, the Credential Identity of an OAuth
+	 * server.
+	 */
+	oauth: Record<string, OAuthGrant>
 	bearer: Record<string, string>
 	headers: Record<string, Record<string, string>>
 	stdioEnv: Record<string, Record<string, string>>
@@ -105,20 +108,41 @@ export type RuntimeStores = {
 	) => Promise<Array<{ name: string; tokenRemoved: boolean }>>
 }
 
+type LegacyOAuthToken = {
+	accessToken: string
+	tokenType: string
+	clientId?: string
+	clientSecretKey?: string
+	refreshToken?: string
+	expiresAt?: string
+	scope?: string
+}
+
 type LegacyCredentials = {
 	version: 1
-	oauth: Record<string, OAuthToken>
+	oauth: Record<string, LegacyOAuthToken>
 	oauthClientSecrets?: Record<string, string>
 }
+
+/** The pre-SDK credential generation: tokens keyed by `server:issuer`. */
+type CredentialStateV2 = Omit<CredentialState, 'version' | 'oauth'> & {
+	version: 2
+	oauth: Record<string, LegacyOAuthToken>
+	oauthClientSecrets: Record<string, string>
+}
+
+// Matches the redirect URI manual clients were registered with.
+const MANUAL_REDIRECT_URI = 'http://127.0.0.1:65245/callback'
 
 export async function openRuntimeStores(root: string): Promise<RuntimeStores> {
 	const stateDir = path.join(root, STATE_DIR)
 	await cleanupUnpublishedMigrations(root)
 	if (!(await exists(stateDir))) await migrateLegacyState(root, stateDir)
 	await recoverTransaction(stateDir)
+	const paths = statePaths(stateDir)
+	await upgradeCredentials(paths)
 	await archiveLegacyFiles(root)
 
-	const paths = statePaths(stateDir)
 	let tail = Promise.resolve()
 	let poison: Error | undefined
 	const exclusive = <T>(operation: () => Promise<T>): Promise<T> => {
@@ -191,6 +215,8 @@ export async function openRuntimeStores(root: string): Promise<RuntimeStores> {
 					{ version: 1, oauth: {} },
 				)
 				declared.servers[name] = split.registry.servers[name]!
+				// A re-added server starts a new grant, like a new declaration.
+				delete secrets.oauth[name]
 				delete secrets.headers[name]
 				delete secrets.stdioEnv[name]
 				for (const key of Object.keys(secrets.bearer)) {
@@ -217,22 +243,13 @@ export async function openRuntimeStores(root: string): Promise<RuntimeStores> {
 				for (const name of names) {
 					const server = declared.servers[name]
 					if (!server) continue
-					let tokenRemoved = false
+					const tokenRemoved = secrets.oauth[name] !== undefined
 					delete declared.servers[name]
 					delete cache.servers[name]
 					delete secrets.headers[name]
 					delete secrets.stdioEnv[name]
 					for (const key of Object.keys(secrets.bearer)) {
 						if (key.startsWith(`${name}:bearer:`)) delete secrets.bearer[key]
-					}
-					if (
-						server.transport !== 'stdio' &&
-						server.auth.kind === 'oauth-token'
-					) {
-						tokenRemoved = !isOAuthTokenReferenced(
-							declared,
-							server.auth.tokenKey,
-						)
 					}
 					removed.push({ name, tokenRemoved })
 				}
@@ -295,11 +312,11 @@ function splitLegacyState(
 	legacyCredentials: LegacyCredentials,
 ): {
 	registry: DeclaredRegistry
-	credentials: CredentialState
+	credentials: CredentialStateV2
 	schemas: SchemaCache
 } {
 	const declarations: DeclaredRegistry = { version: 2, servers: {} }
-	const credentials: CredentialState = {
+	const credentials: CredentialStateV2 = {
 		version: 2,
 		oauth: legacyCredentials.oauth,
 		oauthClientSecrets: legacyCredentials.oauthClientSecrets ?? {},
@@ -335,7 +352,7 @@ function splitLegacyState(
 function migrateAuth(
 	name: string,
 	server: HttpServerConfig,
-	credentials: CredentialState,
+	credentials: Pick<CredentialState, 'bearer'>,
 ): DeclaredAuth {
 	if (server.auth.kind !== 'bearer') return server.auth
 
@@ -458,31 +475,80 @@ async function recoverTransaction(stateDir: string): Promise<void> {
 	await fs.rm(paths.transaction)
 }
 
-function isOAuthTokenReferenced(
-	registry: DeclaredRegistry,
-	tokenKey: string,
-): boolean {
-	return Object.values(registry.servers).some(
-		(server) =>
-			server.transport !== 'stdio' &&
-			server.auth.kind === 'oauth-token' &&
-			server.auth.tokenKey === tokenKey,
-	)
+function sweepUnreferencedOAuth(state: RuntimeState): void {
+	for (const name of Object.keys(state.credentials.oauth)) {
+		const server = state.registry.servers[name]
+		// An unauthenticated server may be earning its first grant from a 401.
+		if (server && server.transport !== 'stdio' && server.auth.kind !== 'bearer')
+			continue
+		delete state.credentials.oauth[name]
+	}
 }
 
-function sweepUnreferencedOAuth(state: RuntimeState): void {
-	for (const [tokenKey, token] of Object.entries(state.credentials.oauth)) {
-		if (isOAuthTokenReferenced(state.registry, tokenKey)) continue
-		delete state.credentials.oauth[tokenKey]
-		if (
-			token.clientSecretKey &&
-			!Object.values(state.credentials.oauth).some(
-				(candidate) => candidate.clientSecretKey === token.clientSecretKey,
-			)
-		) {
-			delete state.credentials.oauthClientSecrets[token.clientSecretKey]
+/**
+ * Moves pre-SDK OAuth tokens into per-server grants in the SDK's shapes. The
+ * journaled commit makes the registry and credential rewrite one generation.
+ */
+async function upgradeCredentials(paths: RuntimeStatePaths): Promise<void> {
+	const state = await readRuntimeState(paths)
+	const legacy = state.credentials as unknown as
+		| CredentialStateV2
+		| CredentialState
+	if (legacy.version === 3) return
+
+	const oauth: CredentialState['oauth'] = {}
+	for (const [name, server] of Object.entries(state.registry.servers)) {
+		if (server.transport === 'stdio') continue
+		const auth = server.auth as { kind: string; tokenKey?: string }
+		if (auth.kind === 'oauth-token') {
+			server.auth = { kind: 'oauth' }
+			const token = auth.tokenKey ? legacy.oauth[auth.tokenKey] : undefined
+			if (token) oauth[name] = grantFromLegacyToken(token, legacy)
+		} else if (auth.kind === 'oauth') {
+			server.auth = { kind: 'oauth' }
+		} else if (auth.kind === 'unknown') {
+			// The next 401 challenge decides; a stale guess must not block Calls.
+			server.auth = { kind: 'none' }
 		}
 	}
+	state.credentials = {
+		version: 3,
+		oauth,
+		bearer: legacy.bearer,
+		headers: legacy.headers,
+		stdioEnv: legacy.stdioEnv ?? {},
+	}
+	await commitRuntimeState(paths, state)
+}
+
+function grantFromLegacyToken(
+	token: LegacyOAuthToken,
+	legacy: CredentialStateV2,
+): OAuthGrant {
+	const grant: OAuthGrant = {
+		tokens: {
+			value: { access_token: token.accessToken, token_type: token.tokenType },
+		},
+	}
+	if (token.refreshToken) grant.tokens!.value.refresh_token = token.refreshToken
+	if (token.scope) grant.tokens!.value.scope = token.scope
+	if (token.expiresAt) grant.tokens!.expiresAt = token.expiresAt
+	if (token.clientId) {
+		const secret = token.clientSecretKey
+			? legacy.oauthClientSecrets[token.clientSecretKey]
+			: undefined
+		grant.client = secret
+			? {
+					registration: 'manual',
+					redirectUri: MANUAL_REDIRECT_URI,
+					information: { client_id: token.clientId, client_secret: secret },
+				}
+			: {
+					registration: 'dynamic',
+					information: { client_id: token.clientId },
+				}
+	}
+	return grant
 }
 
 export const __test = {
