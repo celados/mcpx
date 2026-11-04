@@ -45,6 +45,19 @@ describe('mcpx skill command', () => {
 		).rejects.toThrow()
 	})
 
+	it('refuses to print the temporary skill into an agent pipe', async () => {
+		const cwd = await mkdtemp(join(tmpdir(), 'mcpx-skill-show-'))
+		const refused = runSkillCommand(
+			fixtureService(),
+			cwd,
+			{ show: 'slack' },
+			() => true,
+		)
+		await expect(refused).rejects.toMatchObject({
+			envelope: { error: 'DOMAIN_ERROR', code: 'OUTPUT_CAPTURED' },
+		})
+	})
+
 	it('writes project skill references from registry declarations', async () => {
 		const cwd = await mkdtemp(join(tmpdir(), 'mcpx-skill-write-'))
 		const output = await runSkillCommand(fixtureService(), cwd, {
