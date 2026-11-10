@@ -1,4 +1,3 @@
-import { domainError, isAgentCapture } from '@celados/argc'
 import { cancel, isCancel, multiselect } from '@clack/prompts'
 
 import type { RegistryConfig } from './types'
@@ -20,7 +19,6 @@ export async function runSkillCommand(
 	registry: RegistryView,
 	cwd: string,
 	input: SkillCommandInput,
-	captured: () => boolean = isAgentCapture,
 ): Promise<string> {
 	const availableServers = Object.keys(registry.servers).sort()
 	if (availableServers.length === 0) {
@@ -34,8 +32,6 @@ export async function runSkillCommand(
 			throw new Error('--show cannot be combined with --servers.')
 		}
 		const server = normalizeShownServer(input.show, availableServers)
-		// A guide like @skill: argc guards its own guides, this one is ours.
-		if (captured()) throw showCaptured(server)
 		return buildMcpxSkillMarkdown([server], { projectLocal: false })
 	}
 
@@ -117,22 +113,4 @@ function normalizeShownServer(
 		throw new Error(`Unknown MCP server: ${server}`)
 	}
 	return server
-}
-
-// Same refusal argc gives @skill/@schema (spec 7.12): an agent piping the guide
-// into head/grep would act on a fragment.
-function showCaptured(server: string): Error {
-	const line = `mcpx @skill-install "{ show: '${server}' }"`
-	return domainError(
-		'OUTPUT_CAPTURED',
-		`mcpx @skill-install --show is meant to be read whole, and stdout is a pipe or $(…): head/tail/grep/sed/rg would hand you a fragment that reads like the whole. Nothing ran.`,
-		{
-			$hint: [
-				'run it alone — the shell tool shows all of it:',
-				`  ${line}`,
-				'or keep it whole in a file, then read the whole file:',
-				`  ${line} > "\${TMPDIR:-/tmp}/mcpx-skill-${server}.out"`,
-			].join('\n'),
-		},
-	)
 }

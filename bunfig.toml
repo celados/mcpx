@@ -1,2 +1,0 @@
-[test]
-preload = ["@celados/argc/test-preload"]
