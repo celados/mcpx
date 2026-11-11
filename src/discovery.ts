@@ -52,15 +52,15 @@ export async function discoverServer(
 		}
 	} catch (error) {
 		const message = error instanceof Error ? error.message : String(error)
-		// The challenge, not a probe, says the server wants OAuth (ADR 0009).
-		// @add never starts OAuth, so name the commands that do.
+		// The challenge, not a probe, says the server wants OAuth (ADR 0009); the
+		// Runtime's @add goes on to sign in (ADR 0010).
 		if (!configuredAuth && authorizationChallenge(error)) {
 			server.auth = { kind: 'oauth' }
 			return {
 				server,
 				status: 'auth-required',
 				message:
-					'Authentication is required before tool schemas can be listed. Run `mcpx @refresh` or call a tool to authenticate.',
+					'Authentication is required before tool schemas can be listed. Run `mcpx @login` to sign in.',
 			}
 		}
 		if (configuredAuth && authorizationChallenge(error)) {

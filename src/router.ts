@@ -94,6 +94,12 @@ const removeInput = s(
 	}),
 )
 
+const loginInput = s(
+	v.object({
+		name: v.pipe(v.string(), v.description('Registered OAuth server name')),
+	}),
+)
+
 const skillInput = s(
 	v.object({
 		servers: v.optional(
@@ -169,6 +175,13 @@ function buildRouter(registry: RegistryView): Router {
 				],
 			})
 			.input(removeInput),
+		'@login': c
+			.meta({
+				description:
+					'Sign in to an OAuth MCP server in the browser, replacing its current grant (e.g. to switch accounts). The old grant stays until the new sign-in succeeds.',
+				examples: [`mcpx @login "{ name: 'higgsfield' }"`],
+			})
+			.input(loginInput),
 		'@refresh': c.meta({
 			description:
 				'Refresh all registered MCP server schemas and report auth status.',
@@ -331,7 +344,26 @@ function buildHandlers(
 			if (bearer) intent.bearer = bearer
 		}
 		return await renderOutput(
-			await requestRuntime(intent, mainPath),
+			await requestRuntime(intent, mainPath, {
+				onEvent: renderRuntimeProgress,
+				onInput: promptForRuntimeInput,
+			}),
+			options.context,
+		)
+	}
+
+	handlers['@login'] = async (options: HandlerOptions<{ name: string }>) => {
+		return await renderOutput(
+			await requestRuntime(
+				{
+					requestId: crypto.randomUUID(),
+					op: 'refreshServers',
+					serverNames: [assertServerName(options.input.name)],
+					signIn: true,
+				},
+				mainPath,
+				{ onEvent: renderRuntimeProgress, onInput: promptForRuntimeInput },
+			),
 			options.context,
 		)
 	}

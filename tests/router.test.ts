@@ -11,6 +11,7 @@ describe('router', () => {
 		expect(Object.keys(router).sort()).toEqual([
 			'@add',
 			'@daemon',
+			'@login',
 			'@refresh',
 			'@remove',
 			'@skill-install',

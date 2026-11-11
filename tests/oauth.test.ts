@@ -91,6 +91,34 @@ describe('oauth', () => {
 		])
 	})
 
+	it('signs in again instead of refreshing a usable grant, prompting for login', async () => {
+		const fixture = serveAuthorizationServer()
+		const stored = storedGrant(fixture.origin)
+		stored.tokens!.value.scope = 'mcp:tools'
+		const flow = flowOptions(fixture, { grant: stored, signIn: true })
+
+		await authorizeOAuth(flow.options)
+
+		expect(fixture.tokenRequests.map((body) => body.get('grant_type'))).toEqual(
+			['authorization_code'],
+		)
+		const authorize = new URL(flow.browserUrls[0]!)
+		expect(authorize.searchParams.get('prompt')).toBe('login')
+		expect(authorize.searchParams.get('scope')).toBe('mcp:tools')
+		expect(flow.grant?.tokens?.value.access_token).toBe('access-1')
+		expect(flow.grant?.client?.information.client_id).toBe('dynamic-client')
+	})
+
+	it('keeps the old grant when a new sign-in fails', async () => {
+		const fixture = serveAuthorizationServer({ callbackIssuer: 'https://evil' })
+		const stored = storedGrant(fixture.origin)
+		const flow = flowOptions(fixture, { grant: stored, signIn: true })
+
+		await expect(authorizeOAuth(flow.options)).rejects.toThrow()
+
+		expect(flow.grant).toEqual(stored)
+	})
+
 	it('falls back to browser authorization when the refresh grant is revoked', async () => {
 		const fixture = serveAuthorizationServer({ rejectRefresh: true })
 		const flow = flowOptions(fixture, { grant: storedGrant(fixture.origin) })
@@ -305,6 +333,7 @@ describe('oauth', () => {
 		overrides: {
 			grant?: OAuthGrant
 			challenge?: AuthorizeOAuthOptions['challenge']
+			signIn?: boolean
 			requestManualClient?: AuthorizeOAuthOptions['requestManualClient']
 		} = {},
 	) {
@@ -324,6 +353,7 @@ describe('oauth', () => {
 				},
 			},
 			challenge: overrides.challenge,
+			...(overrides.signIn ? { signIn: true } : {}),
 			signal: new AbortController().signal,
 			report: (progress) => flow.progress.push(progress),
 			requestManualClient:
