@@ -87,7 +87,11 @@ export class McpRuntime {
 				return
 			case 'refreshServers':
 				try {
-					const outcome = await this.#refreshServers(intent.serverNames, caller)
+					const outcome = await this.#refreshServers(
+						intent.serverNames,
+						caller,
+						{ signIn: intent.signIn === true },
+					)
 					if (outcome.status === 'disconnected') return
 					await caller.send({
 						requestId: intent.requestId,
@@ -106,20 +110,48 @@ export class McpRuntime {
 				try {
 					const result = await discoverServer(discoveryOptions(intent))
 					await this.#stores.upsertServer(intent.serverName, result.server)
+					const added = {
+						name: intent.serverName,
+						transport: result.server.transport ?? 'http',
+						status: result.status,
+						auth:
+							result.server.transport === 'stdio'
+								? undefined
+								: result.server.auth,
+						tools: result.server.tools?.length ?? 0,
+						message: result.message,
+					}
+					// Adding is the user asking to use the server: a challenged listing
+					// goes straight on to browser sign-in, then lists the tools (ADR 0010).
+					if (
+						result.status === 'auth-required' &&
+						result.server.transport !== 'stdio' &&
+						result.server.auth.kind === 'oauth'
+					) {
+						const outcome = await this.#refreshServers(
+							[intent.serverName],
+							caller,
+							{ signIn: false },
+						)
+						if (outcome.status === 'disconnected') return
+						const failure = outcome.failed[0]
+						const snapshot = await this.#stores.readSnapshot()
+						Object.assign(
+							added,
+							failure
+								? { message: failure.message }
+								: {
+										status: 'ready',
+										tools:
+											snapshot.servers[intent.serverName]?.tools?.length ?? 0,
+										message: 'Signed in and discovered tools.',
+									},
+						)
+					}
 					await caller.send({
 						requestId: intent.requestId,
 						kind: 'result',
-						result: {
-							name: intent.serverName,
-							transport: result.server.transport ?? 'http',
-							status: result.status,
-							auth:
-								result.server.transport === 'stdio'
-									? undefined
-									: result.server.auth,
-							tools: result.server.tools?.length ?? 0,
-							message: result.message,
-						},
+						result: added,
 					})
 				} catch (error) {
 					await caller.send({
@@ -166,6 +198,7 @@ export class McpRuntime {
 	async #refreshServers(
 		serverNames: string[] | undefined,
 		caller: RuntimeCaller,
+		options: { signIn: boolean },
 	): Promise<RuntimeRefreshOutcome> {
 		const registry = await this.#stores.registry.read()
 		const names = serverNames ?? Object.keys(registry.servers).sort()
@@ -215,6 +248,7 @@ export class McpRuntime {
 						name,
 						caller,
 						{
+							signIn: options.signIn,
 							onProgress: (progress) =>
 								report(name, progress.phase, progress.message, progress.url),
 						},

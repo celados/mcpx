@@ -132,6 +132,68 @@ describe('OAuth discovered from a call-time challenge', () => {
 		)
 	})
 
+	it('signs in during @add, then @login replaces the working grant', async () => {
+		const fixture = serveMixedAuthServer({ protectAll: true })
+		const root = await fs.mkdtemp(path.join(tmpdir(), 'mcpx-signin-'))
+		roots.push(root)
+		const stores = await openRuntimeStores(root)
+		const browserUrls: string[] = []
+		const runtime = new McpRuntime(stores, {
+			authentication: new RuntimeAuthentication(stores, {
+				openBrowser: (url) => {
+					browserUrls.push(url)
+					void fetch(url).catch(() => {})
+				},
+			}),
+		})
+
+		const add = createInMemoryRuntimeCaller('add')
+		await runtime.handle(
+			{
+				requestId: 'add',
+				op: 'addServer',
+				serverName: 'wb',
+				transport: 'http',
+				url: fixture.url,
+			},
+			add,
+		)
+		expect(add.frames.find((frame) => frame.kind === 'result')).toMatchObject({
+			result: { status: 'ready', auth: { kind: 'oauth' }, tools: 2 },
+		})
+		expect(browserUrls).toHaveLength(1)
+		expect(new URL(browserUrls[0]!).searchParams.get('prompt')).toBe(null)
+
+		// The grant still works; a refresh leaves it alone, a sign-in does not.
+		const refresh = createInMemoryRuntimeCaller('refresh')
+		await runtime.handle(
+			{ requestId: 'refresh', op: 'refreshServers', serverNames: ['wb'] },
+			refresh,
+		)
+		expect(browserUrls).toHaveLength(1)
+		const login = createInMemoryRuntimeCaller('login')
+		await runtime.handle(
+			{
+				requestId: 'login',
+				op: 'refreshServers',
+				serverNames: ['wb'],
+				signIn: true,
+			},
+			login,
+		)
+		expect(login.frames.find((frame) => frame.kind === 'result')).toMatchObject(
+			{
+				result: { status: 'completed', refreshed: ['wb'], failed: [] },
+			},
+		)
+		expect(browserUrls).toHaveLength(2)
+		expect(new URL(browserUrls[1]!).searchParams.get('prompt')).toBe('login')
+		await runtime.handle(
+			{ requestId: 'stop', op: 'stop' },
+			createInMemoryRuntimeCaller('stop'),
+		)
+	})
+
 	function serveMixedAuthServer(
 		options: { protectAll?: boolean; insufficientScope?: boolean } = {},
 	) {

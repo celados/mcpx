@@ -135,6 +135,7 @@ mcpx @add "{ name: '<server>', url: '<mcp-url>' }"
 mcpx @add "{ name: '<server>', url: '<mcp-url>', bearer: 'env:<TOKEN_ENV>' }"
 mcpx @add "{ name: '<server>', transport: 'stdio', command: '<command>', args: ['<arg>'] }"
 mcpx @remove "{ name: '<server>' }"
+mcpx @login "{ name: '<server>' }"
 mcpx @refresh
 mcpx @daemon.status
 mcpx @daemon.stop
@@ -194,9 +195,13 @@ discovers its authorization server from that challenge, authorizes, records
 the server as OAuth, and retries the request. This covers servers whose tools
 are partly anonymous — `@add` lists their tools without credentials, and the
 first call to a protected tool starts sign-in. A `403 insufficient_scope`
-challenge re-authorizes with the additional scope the same way. `@add` itself
-never opens a browser; it reports `auth-required` when listing tools was
-challenged.
+challenge re-authorizes with the additional scope the same way. When `@add`
+itself is challenged, it signs in right away and then lists the tools.
+
+To switch accounts, run `mcpx @login "{ name: '<server>' }"`. It opens a new
+browser sign-in (with OIDC `prompt=login`, so the old browser session is not
+reused silently) and replaces the stored grant only once the new sign-in
+succeeds.
 
 For OAuth servers that support dynamic client registration, mcpx registers a
 client automatically for each browser sign-in.

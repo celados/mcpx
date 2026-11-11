@@ -81,7 +81,13 @@ export type RuntimeIntent =
 			env?: Record<string, string>
 	  }
 	| { requestId: string; op: 'removeServers'; serverNames: string[] }
-	| { requestId: string; op: 'refreshServers'; serverNames?: string[] }
+	| {
+			requestId: string
+			op: 'refreshServers'
+			serverNames?: string[]
+			/** Replace each OAuth grant with a new browser sign-in. */
+			signIn?: boolean
+	  }
 	| { requestId: string; op: 'status' }
 	| { requestId: string; op: 'stop' }
 
@@ -176,9 +182,10 @@ export function parseRuntimeIntent(
 				? (value as RuntimeIntent)
 				: invalidFrame()
 		case 'refreshServers':
-			return hasOnly(value, ['requestId', 'op', 'serverNames']) &&
+			return hasOnly(value, ['requestId', 'op', 'serverNames', 'signIn']) &&
 				hasRequired(value, ['requestId', 'op']) &&
-				(value.serverNames === undefined || isStringArray(value.serverNames))
+				(value.serverNames === undefined || isStringArray(value.serverNames)) &&
+				(value.signIn === undefined || typeof value.signIn === 'boolean')
 				? (value as RuntimeIntent)
 				: invalidFrame()
 		default:

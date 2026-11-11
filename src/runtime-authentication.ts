@@ -24,6 +24,8 @@ export type AuthorizationProgress = AuthenticationProgress & {
 export type AuthorizeOptions = {
 	/** The server rejected a request; its challenge says what it wants. */
 	challenge?: OAuthChallenge | undefined
+	/** Replace the grant with a new browser sign-in, even if it still works. */
+	signIn?: boolean
 	signal?: AbortSignal
 	onProgress?: (progress: AuthorizationProgress) => void
 }
@@ -77,20 +79,29 @@ export class RuntimeAuthentication {
 				`Unknown MCP server: ${serverName}.`,
 			)
 		}
+		const { challenge, signIn } = options
+		if (
+			signIn &&
+			(server.transport === 'stdio' || server.auth.kind === 'bearer')
+		)
+			throw new RuntimeOperationError(
+				'operation-failed',
+				`${serverName} does not sign in through OAuth; re-add it with new credentials.`,
+			)
 		if (server.transport === 'stdio') return 'ready'
 
-		const { challenge } = options
 		if (server.auth.kind === 'bearer') {
 			// Static credentials cannot be repaired by the Runtime.
 			if (challenge) throw reauthRequired(serverName)
 			return 'ready'
 		}
-		if (server.auth.kind === 'none' && !challenge) return 'ready'
+		if (server.auth.kind === 'none' && !challenge && !signIn) return 'ready'
 
 		const observed = credentials.oauth[serverName]
 		if (
 			server.auth.kind === 'oauth' &&
 			!challenge &&
+			!signIn &&
 			oauthAccessToken(observed)
 		)
 			return 'ready'
@@ -101,7 +112,9 @@ export class RuntimeAuthentication {
 				]
 				// A caller can arrive after a shared flow persisted but before it observed
 				// completion; reuse that rotation instead of authorizing again.
+				// A sign-in wants a new grant, never one that merely rotated.
 				if (
+					!signIn &&
 					current?.tokens?.value.access_token !==
 						observed?.tokens?.value.access_token &&
 					oauthAccessToken(current)
@@ -112,6 +125,7 @@ export class RuntimeAuthentication {
 					serverUrl: new URL(server.url),
 					grants: this.#grantStore(serverName),
 					challenge,
+					signIn,
 					signal,
 					report,
 					openBrowser: this.#openBrowser,

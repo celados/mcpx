@@ -59,6 +59,11 @@ export type AuthorizeOAuthOptions = {
 	serverUrl: URL
 	grants: OAuthGrantStore
 	challenge?: OAuthChallenge | undefined
+	/**
+	 * A new sign-in the user asked for, such as switching accounts: skip the
+	 * refresh grant and ask the authorization server to prompt for login again.
+	 */
+	signIn?: boolean
 	signal: AbortSignal
 	requestManualClient: (
 		request: ManualOAuthClientRequest,
@@ -98,14 +103,15 @@ export function oauthAccessToken(
 export async function authorizeOAuth(
 	options: AuthorizeOAuthOptions,
 ): Promise<void> {
-	const { challenge, signal } = options
+	const { challenge, signal, signIn } = options
 	const grant = await options.grants.read()
 	const grantedScope = grant?.tokens?.value.scope
-	// A 403 step-up keeps what was granted and adds what the server asked for.
+	// A 403 step-up keeps what was granted and adds what the server asked for;
+	// a new sign-in asks again for what the old grant held.
 	const scope =
 		challenge?.status === 403
 			? computeScopeUnion(grantedScope, challenge.scope)
-			: challenge?.scope
+			: (challenge?.scope ?? (signIn ? grantedScope : undefined))
 	const widensScope =
 		challenge?.status === 403 && isStrictScopeSuperset(scope, grantedScope)
 	const base = {
@@ -118,7 +124,12 @@ export async function authorizeOAuth(
 	}
 
 	// A refresh grant cannot widen scope (RFC 6749 §6), so step-up skips it.
-	if (grant?.client && grant.tokens?.value.refresh_token && !widensScope) {
+	if (
+		!signIn &&
+		grant?.client &&
+		grant.tokens?.value.refresh_token &&
+		!widensScope
+	) {
 		options.report({
 			phase: 'refreshing-token',
 			message: 'refreshing OAuth token',
@@ -322,6 +333,10 @@ class McpxOAuthProvider implements OAuthClientProvider {
 
 	redirectToAuthorization(authorizationUrl: URL): void {
 		if (this.#mode === 'refresh') throw new InteractionRequired()
+		// OIDC `prompt=login`: a browser still signed in to the old account must
+		// not silently authorize it again. Servers without OIDC ignore it.
+		if (this.#options.signIn)
+			authorizationUrl.searchParams.set('prompt', 'login')
 		const url = authorizationUrl.toString()
 		// The Runtime's stderr is detached; callers must receive the URL as an event
 		// so a failed browser launch never turns into a silent wait.

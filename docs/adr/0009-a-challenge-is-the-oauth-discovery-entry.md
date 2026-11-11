@@ -10,7 +10,7 @@ Whether a server needs OAuth is decided by the resource server's challenge, at a
 
 `@add` used to `GET` the server URL and freeze the result as the server's auth kind. A mixed-auth server — anonymous tools beside protected ones, such as `whiteboardanimation.ai` — answers that `GET` with `405`, so it was recorded as unauthenticated, and its spec-compliant challenge on a protected tool could only end in `reauth-required`. The probe guessed from the wrong request; the challenge is the server's own answer.
 
-- `@add` no longer probes. It lists tools; a challenged listing records the server as OAuth and reports `auth-required` without opening a browser.
+- `@add` no longer probes. It lists tools; a challenged listing records the server as OAuth. (It used to stop there with `auth-required`; [ADR 0010](0010-adding-signs-in-and-login-replaces-a-grant.md) has it sign in.)
 - The transport carries an mcpx `authProvider` whose `onUnauthorized` surfaces the challenge instead of running OAuth inside the request, so the Runtime keeps single-flight, Caller Input, progress events, and registry ownership (ADR 0002).
 - OAuth itself — discovery, dynamic registration, PKCE, resource indicators, `iss` validation, refresh — is the official MCP SDK's `auth()`. mcpx supplies its `OAuthClientProvider`: per-server grants in the Credential Store, a loopback callback per sign-in, and the fixed `http://127.0.0.1:65245/callback` for manually registered clients. A refresh never opens the browser; a new sign-in never replays stored tokens or a client registered for another port, and replaces the stored grant only once it succeeds.
 - A bearer credential that is challenged still fails with `reauth-required`; static credentials cannot be repaired by the Runtime.

@@ -279,6 +279,9 @@ mcpx @refresh
 
 If the current session is not a TTY, ask the user to run it in their terminal.
 
+To sign in with a different account, run
+\`mcpx @login "{ name: '<server>' }"\` and share the printed URL with the user.
+
 Once \`mcpx\` lists the server and a focused \`@schema\` call succeeds, return
 to the skill.
 `
