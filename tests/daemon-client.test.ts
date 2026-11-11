@@ -46,12 +46,12 @@ describe('MCP Runtime process client', () => {
 			mainPath,
 		)) as { protocolVersion: number; activeServers: number }
 
-		expect(status.protocolVersion).toBe(3)
+		expect(status.protocolVersion).toBe(4)
 		expect(status.activeServers).toBe(0)
 		expect((await fs.stat(daemonSocketPath())).mode & 0o777).toBe(0o600)
 	})
 
-	it('stops an older protocol daemon before starting v3', async () => {
+	it('stops an older protocol daemon before starting v4', async () => {
 		await startFakeDaemon({ protocolVersion: 2, version: '0.0.0' })
 
 		const status = (await requestRuntime(
@@ -59,7 +59,7 @@ describe('MCP Runtime process client', () => {
 			mainPath,
 		)) as { protocolVersion: number }
 
-		expect(status.protocolVersion).toBe(3)
+		expect(status.protocolVersion).toBe(4)
 		expect(fakeDaemon).toBeUndefined()
 	})
 
@@ -84,7 +84,7 @@ describe('MCP Runtime process client', () => {
 		try {
 			expect(await requestJsonLine(socket, helloMessage())).toMatchObject({
 				ok: true,
-				protocolVersion: 3,
+				protocolVersion: 4,
 			})
 			expect(
 				await requestJsonLine(socket, { requestId: 'first', op: 'status' }),
@@ -128,7 +128,7 @@ describe('MCP Runtime process client', () => {
 
 	it('rejects when a daemon closes before sending a terminal frame', async () => {
 		await startFakeDaemon({
-			protocolVersion: 3,
+			protocolVersion: 4,
 			version: '0.9.15',
 			closeOnIntent: true,
 		})
@@ -142,7 +142,7 @@ describe('MCP Runtime process client', () => {
 
 	it('aborts an active CLI input provider after the terminal frame', async () => {
 		await startFakeDaemon({
-			protocolVersion: 3,
+			protocolVersion: 4,
 			version: '0.9.15',
 			inputThenTerminal: true,
 		})

@@ -126,15 +126,18 @@ export async function runMcpx(
 	cwd: string,
 	mainPath: string,
 ): Promise<void> {
-	const snapshot = (await requestRuntime(
-		{ requestId: crypto.randomUUID(), op: 'registrySnapshot' },
-		mainPath,
-	)) as RuntimeRegistrySnapshot
-	const registry: RegistryView = {
-		servers: snapshot.servers as unknown as RegistryConfig['servers'],
+	const schemas = new SchemaResync(mainPath)
+	let registry = await schemas.registry()
+	// A tool the cache has never seen may be one the server added since: ask
+	// the server before calling it unknown (ADR 0011).
+	const target = toolTarget(argv[0], registry)
+	if (target) {
+		const current = registry
+		// An unreachable server leaves the cached verdict standing.
+		registry = await schemas.resync(target.serverName).catch(() => current)
 	}
 
-	const app = cli(buildRouter(registry), {
+	const app = cli(buildRouter(registry, schemas), {
 		name: 'mcpx',
 		version: MCPX_VERSION,
 		description: 'Global MCP registry and agent-facing command surface.',
@@ -152,9 +155,72 @@ export async function runMcpx(
 	)
 }
 
-function buildRouter(registry: RegistryView): Router {
+/**
+ * The CLI's one way back to the server when its cached schema looks stale: at
+ * most one `syncSchemas` per server per invocation.
+ */
+class SchemaResync {
+	readonly #mainPath: string
+	readonly #synced = new Map<string, Promise<RegistryView>>()
+
+	constructor(mainPath: string) {
+		this.#mainPath = mainPath
+	}
+
+	async registry(): Promise<RegistryView> {
+		const snapshot = (await requestRuntime(
+			{ requestId: crypto.randomUUID(), op: 'registrySnapshot' },
+			this.#mainPath,
+		)) as RuntimeRegistrySnapshot
+		return { servers: snapshot.servers as unknown as RegistryConfig['servers'] }
+	}
+
+	resync(serverName: string): Promise<RegistryView> {
+		let synced = this.#synced.get(serverName)
+		if (!synced) {
+			synced = requestRuntime(
+				{
+					requestId: crypto.randomUUID(),
+					op: 'syncSchemas',
+					serverNames: [serverName],
+				},
+				this.#mainPath,
+				{ onEvent: renderRuntimeProgress, onInput: promptForRuntimeInput },
+			).then(() => this.registry())
+			this.#synced.set(serverName, synced)
+		}
+		return synced
+	}
+
+	/** The server's current input schema for a tool, if it still has one. */
+	async inputSchema(serverName: string, toolName: string): Promise<unknown> {
+		const registry = await this.resync(serverName).catch(() => undefined)
+		const tool = registry?.servers[serverName]?.tools?.find(
+			(item) => item.name === toolName,
+		)
+		return tool ? (tool.inputSchema ?? {}) : undefined
+	}
+}
+
+function toolTarget(
+	arg: string | undefined,
+	registry: RegistryView,
+): { serverName: string; commandName: string } | undefined {
+	if (!arg || arg.startsWith('@') || arg.startsWith('-')) return undefined
+	const dot = arg.indexOf('.')
+	if (dot <= 0) return undefined
+	const serverName = arg.slice(0, dot)
+	const commandName = arg.slice(dot + 1)
+	const server = registry.servers[serverName]
+	if (!server || !commandName) return undefined
+	if (server.tools?.some((tool) => tool.commandName === commandName))
+		return undefined
+	return { serverName, commandName }
+}
+
+function buildRouter(registry: RegistryView, schemas?: SchemaResync): Router {
 	return {
-		...buildServerRouter(registry),
+		...buildServerRouter(registry, schemas),
 		'@add': c
 			.meta({
 				description:
@@ -182,11 +248,6 @@ function buildRouter(registry: RegistryView): Router {
 				examples: [`mcpx @login "{ name: 'higgsfield' }"`],
 			})
 			.input(loginInput),
-		'@refresh': c.meta({
-			description:
-				'Refresh all registered MCP server schemas and report auth status.',
-			examples: ['mcpx @refresh'],
-		}),
 		'@daemon': group(
 			{ description: 'Inspect or stop the local mcpxd daemon.' },
 			{
@@ -218,7 +279,10 @@ function buildRouter(registry: RegistryView): Router {
 	}
 }
 
-function buildServerRouter(registry: RegistryView): Record<string, Router> {
+function buildServerRouter(
+	registry: RegistryView,
+	schemas?: SchemaResync,
+): Record<string, Router> {
 	const servers: Record<string, Router> = {}
 	for (const [serverName, server] of Object.entries(registry.servers)) {
 		const tools = server.tools ?? []
@@ -228,7 +292,16 @@ function buildServerRouter(registry: RegistryView): Record<string, Router> {
 				.meta({
 					description: describeTool(tool, serverName),
 				})
-				.input(jsonSchemaToStandardSchema(tool.inputSchema))
+				.input(
+					jsonSchemaToStandardSchema(
+						tool.inputSchema,
+						schemas
+							? {
+									resync: () => schemas.inputSchema(serverName, tool.name),
+								}
+							: {},
+					),
+				)
 		}
 		servers[serverName] = group(
 			{ description: describeServerTools(tools.length) },
@@ -357,7 +430,7 @@ function buildHandlers(
 			await requestRuntime(
 				{
 					requestId: crypto.randomUUID(),
-					op: 'refreshServers',
+					op: 'syncSchemas',
 					serverNames: [assertServerName(options.input.name)],
 					signIn: true,
 				},
@@ -383,19 +456,6 @@ function buildHandlers(
 					serverNames: names,
 				},
 				mainPath,
-			),
-			options.context,
-		)
-	}
-
-	handlers['@refresh'] = async (
-		options: HandlerOptions<Record<string, never>>,
-	) => {
-		return await renderOutput(
-			await requestRuntime(
-				{ requestId: crypto.randomUUID(), op: 'refreshServers' },
-				mainPath,
-				{ onEvent: renderRuntimeProgress, onInput: promptForRuntimeInput },
 			),
 			options.context,
 		)

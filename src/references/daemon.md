@@ -62,8 +62,8 @@ when a tool call fails with no useful CLI output.
   thrashing or session-id rejection loop).
 - Two registry entries with identical launch parameters appear as separate
   sessions in status (key derivation may not match expectation).
-- Tool schema in the project does not match the live MCP server's tools and
-  `mcpx @refresh` does not converge.
+- Tool schema in the project does not match the live MCP server's tools even
+  after calling the tool (calls re-sync a stale schema).
 
 In all other cases prefer filing an issue with the command, input, and any
 relevant log excerpt at https://github.com/celados/mcpx/issues.

@@ -7,12 +7,14 @@ import { progressEvent, RuntimeAuthentication } from './runtime-authentication'
 import { RuntimeCall, RuntimeOperationError } from './runtime-call'
 import { DAEMON_PROTOCOL_VERSION } from './runtime-protocol'
 import { RuntimeSessionPool } from './runtime-session-pool'
+import { SchemaUpkeep } from './schema-upkeep'
 import { MCPX_VERSION } from './version'
 
 export class McpRuntime {
 	readonly #stores: RuntimeStores
 	readonly #sessions: RuntimeSessionPool
 	readonly #authentication: RuntimeAuthentication
+	readonly #upkeep: SchemaUpkeep
 
 	constructor(
 		stores: RuntimeStores,
@@ -24,9 +26,23 @@ export class McpRuntime {
 		this.#stores = stores
 		this.#authentication =
 			options.authentication ?? new RuntimeAuthentication(stores)
+		this.#upkeep = new SchemaUpkeep(stores, () => this.#sessions)
 		this.#sessions =
 			options.sessions ??
-			new RuntimeSessionPool(stores, { authentication: this.#authentication })
+			new RuntimeSessionPool(stores, {
+				authentication: this.#authentication,
+				onSchemaSignal: this.#upkeep.signal,
+			})
+	}
+
+	/** Background re-listing of stale schemas; never opens a browser. */
+	sweepSchemas(staleMs?: number): Promise<void> {
+		return this.#upkeep.sweep(staleMs)
+	}
+
+	/** Settles once every background schema listing started so far is done. */
+	schemaUpkeepIdle(): Promise<void> {
+		return this.#upkeep.idle()
 	}
 
 	async cleanupIdleSessions(maxIdleMs: number): Promise<void> {
@@ -75,6 +91,7 @@ export class McpRuntime {
 				return
 			}
 			case 'stop':
+				this.#upkeep.close()
 				await Promise.all([
 					this.#sessions.close(),
 					this.#authentication.close(),
@@ -85,13 +102,11 @@ export class McpRuntime {
 					result: { stopping: true },
 				})
 				return
-			case 'refreshServers':
+			case 'syncSchemas':
 				try {
-					const outcome = await this.#refreshServers(
-						intent.serverNames,
-						caller,
-						{ signIn: intent.signIn === true },
-					)
+					const outcome = await this.#syncSchemas(intent.serverNames, caller, {
+						signIn: intent.signIn === true,
+					})
 					if (outcome.status === 'disconnected') return
 					await caller.send({
 						requestId: intent.requestId,
@@ -128,7 +143,7 @@ export class McpRuntime {
 						result.server.transport !== 'stdio' &&
 						result.server.auth.kind === 'oauth'
 					) {
-						const outcome = await this.#refreshServers(
+						const outcome = await this.#syncSchemas(
 							[intent.serverName],
 							caller,
 							{ signIn: false },
@@ -195,13 +210,17 @@ export class McpRuntime {
 			}
 		}
 	}
-	async #refreshServers(
-		serverNames: string[] | undefined,
+	/**
+	 * Makes each server's credential usable — interactively, since someone is
+	 * waiting — and lists its tools into the Schema Cache. Used by `@add`,
+	 * `@login`, and a CLI that met a tool or field its cache did not know.
+	 */
+	async #syncSchemas(
+		names: string[],
 		caller: RuntimeCaller,
 		options: { signIn: boolean },
-	): Promise<RuntimeRefreshOutcome> {
+	): Promise<RuntimeSyncOutcome> {
 		const registry = await this.#stores.registry.read()
-		const names = serverNames ?? Object.keys(registry.servers).sort()
 		const missing = names.filter((name) => !registry.servers[name])
 		if (missing.length > 0) {
 			throw new RuntimeOperationError(
@@ -236,11 +255,11 @@ export class McpRuntime {
 				})
 				.catch(() => {})
 		}
-		const refreshed = new Set<string>()
-		const failed = new Map<string, RuntimeRefreshFailure>()
+		const synced = new Set<string>()
+		const failed = new Map<string, RuntimeSyncFailure>()
 
 		try {
-			await forEachConcurrent(names, REFRESH_CONCURRENCY, async (name) => {
+			await forEachConcurrent(names, SYNC_CONCURRENCY, async (name) => {
 				if (disconnected || stopped) return
 				try {
 					report(name, 'checking', 'checking credentials')
@@ -266,7 +285,7 @@ export class McpRuntime {
 							},
 						}
 					})
-					refreshed.add(name)
+					synced.add(name)
 					report(
 						name,
 						'ok',
@@ -311,7 +330,7 @@ export class McpRuntime {
 		if (disconnected) return { status: 'disconnected' }
 		return {
 			status: 'completed',
-			refreshed: names.filter((name) => refreshed.has(name)),
+			synced: names.filter((name) => synced.has(name)),
 			failed: names.flatMap((name) => {
 				const failure = failed.get(name)
 				return failure ? [failure] : []
@@ -320,22 +339,22 @@ export class McpRuntime {
 	}
 }
 
-export type RuntimeRefreshOutcome =
+export type RuntimeSyncOutcome =
 	| {
 			status: 'completed'
-			refreshed: string[]
-			failed: RuntimeRefreshFailure[]
+			synced: string[]
+			failed: RuntimeSyncFailure[]
 	  }
 	| { status: 'disconnected' }
 
-export type RuntimeRefreshFailure = {
+export type RuntimeSyncFailure = {
 	serverName: string
 	message: string
 }
 
 // Servers are independent; a bounded fan-out keeps one slow browser flow from
 // holding every other server hostage without opening a page per server at once.
-const REFRESH_CONCURRENCY = 4
+const SYNC_CONCURRENCY = 4
 
 async function forEachConcurrent<T>(
 	items: T[],

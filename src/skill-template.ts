@@ -271,16 +271,14 @@ When browser authorization is needed — including the first call to a protected
 tool on a server that lists its tools anonymously — the call prints the authorization URL to
 stderr and waits up to 5 minutes; share that URL with the user and let the call
 finish. If a call still returns \`reauth-required\` (for example, a provider
-that needs a manual OAuth client and no terminal is available), run:
+that needs a manual OAuth client and no terminal is available), or the user
+wants a different account, run:
 
 \`\`\`bash
-mcpx @refresh
+mcpx @login "{ name: '<server>' }"
 \`\`\`
 
 If the current session is not a TTY, ask the user to run it in their terminal.
-
-To sign in with a different account, run
-\`mcpx @login "{ name: '<server>' }"\` and share the printed URL with the user.
 
 Once \`mcpx\` lists the server and a focused \`@schema\` call succeeds, return
 to the skill.

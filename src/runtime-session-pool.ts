@@ -32,6 +32,8 @@ import {
 
 type Connect = typeof connectMcpClient
 
+const INVALID_PARAMS = -32602
+
 type ResolvedServer = {
 	key: string
 	config: ServerConfig
@@ -77,10 +79,29 @@ export type RuntimeSessionStatus = {
 	hasRetainedSessionId: boolean
 }
 
+/**
+ * Evidence that a server's cached tool schemas may be out of date: a session
+ * was (re)connected, or the server rejected a call as an unknown tool or with
+ * invalid params.
+ */
+export type SchemaSignal = {
+	serverName: string
+	reason: 'connected' | 'rejected'
+}
+
+export type ListToolsOptions = {
+	/**
+	 * `false` for background work: a challenged listing fails with
+	 * `reauth-required` instead of starting browser authorization.
+	 */
+	interactive?: boolean
+}
+
 export class RuntimeSessionPool {
 	readonly #stores: RuntimeStores
 	readonly #connect: Connect
 	readonly #authentication: RuntimeAuthentication
+	readonly #onSchemaSignal: ((signal: SchemaSignal) => void) | undefined
 	readonly #sessions = new Map<string, ManagedRuntimeSession>()
 	readonly #bearerCursors = new Map<string, number>()
 	#accepting = true
@@ -90,9 +111,11 @@ export class RuntimeSessionPool {
 		options: {
 			connect?: Connect
 			authentication?: RuntimeAuthentication
+			onSchemaSignal?: (signal: SchemaSignal) => void
 		} = {},
 	) {
 		this.#stores = stores
+		this.#onSchemaSignal = options.onSchemaSignal
 		this.#connect = options.connect ?? connectMcpClient
 		this.#authentication =
 			options.authentication ?? new RuntimeAuthentication(stores)
@@ -116,6 +139,7 @@ export class RuntimeSessionPool {
 				input.serverName,
 				call,
 				signal,
+				true,
 				(credential) =>
 					this.#callTool(session, call, input, credential, signal),
 			),
@@ -126,6 +150,7 @@ export class RuntimeSessionPool {
 	async listTools(
 		serverName: string,
 		caller: RuntimeCaller,
+		options: ListToolsOptions = {},
 	): Promise<Awaited<ReturnType<typeof listAllMcpTools>>> {
 		this.#assertAccepting()
 		const resolved = await this.#resolveServer(serverName)
@@ -154,6 +179,7 @@ export class RuntimeSessionPool {
 				serverName,
 				call,
 				signal,
+				options.interactive !== false,
 				async (credential) => {
 					const timeout = setTimeout(() => {
 						void call.cancel('timeout')
@@ -205,6 +231,7 @@ export class RuntimeSessionPool {
 		serverName: string,
 		call: RuntimeCall,
 		signal: AbortSignal,
+		interactive: boolean,
 		run: (credential: AttemptCredential) => Promise<T>,
 	): Promise<T> {
 		for (let retried = false; ; retried = true) {
@@ -224,7 +251,7 @@ export class RuntimeSessionPool {
 				if (!challenge) throw error
 				session.evictCount += 1
 				await this.#closeSession(session, false)
-				if (retried) throw reauthRequired(serverName)
+				if (retried || !interactive) throw reauthRequired(serverName)
 			}
 			if (
 				(await this.#authorize(serverName, call, challenge)) === 'disconnected'
@@ -259,10 +286,18 @@ export class RuntimeSessionPool {
 			input.notificationMode === 'discard' ? undefined : buffer
 		try {
 			const connection = await this.#ensureConnected(session, credential)
-			const result = await connection.client.callTool(
-				{ name: input.toolName, arguments: input.input },
-				{ ...requestOptions, signal },
-			)
+			const result = await connection.client
+				.callTool(
+					{ name: input.toolName, arguments: input.input },
+					{ ...requestOptions, signal },
+				)
+				.catch((error: unknown) => {
+					// Servers answer an unknown tool or a stale argument shape with
+					// JSON-RPC Invalid Params; either way our cached schema may be stale.
+					if ((error as { code?: unknown })?.code === INVALID_PARAMS)
+						this.#signal(input.serverName, 'rejected')
+					throw error
+				})
 			const notifications = await flushNotificationBuffer(buffer)
 			const toolsChanged = buffer.toolsChanged() || session.pendingToolsChanged
 			session.pendingToolsChanged = false
@@ -482,6 +517,8 @@ export class RuntimeSessionPool {
 						)
 					}
 					session.connection = connection
+					for (const serverName of session.serverNames)
+						this.#signal(serverName, 'connected')
 					return connection
 				})
 				.finally(() => {
@@ -508,6 +545,14 @@ export class RuntimeSessionPool {
 		delete session.connecting
 		if (!retainSessionId) delete session.lastSessionId
 		if (!retire) session.closing = false
+	}
+
+	#signal(serverName: string, reason: SchemaSignal['reason']): void {
+		try {
+			this.#onSchemaSignal?.({ serverName, reason })
+		} catch {
+			// Schema upkeep is advisory; it must never fail the call that hinted it.
+		}
 	}
 
 	#assertAccepting(): void {

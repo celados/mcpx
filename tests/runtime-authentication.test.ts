@@ -70,7 +70,7 @@ describe('Runtime authentication', () => {
 				runtime.handle(
 					{
 						requestId: caller.id,
-						op: 'refreshServers',
+						op: 'syncSchemas',
 						serverNames: ['fixture'],
 					},
 					caller,
@@ -124,11 +124,11 @@ describe('Runtime authentication', () => {
 			},
 		}
 		const firstRun = runtime.handle(
-			{ requestId: 'first', op: 'refreshServers', serverNames: ['fixture'] },
+			{ requestId: 'first', op: 'syncSchemas', serverNames: ['fixture'] },
 			first,
 		)
 		const secondRun = runtime.handle(
-			{ requestId: 'second', op: 'refreshServers', serverNames: ['fixture'] },
+			{ requestId: 'second', op: 'syncSchemas', serverNames: ['fixture'] },
 			second,
 		)
 		await waitFor(() => callbackOpen && secondJoined)
@@ -166,7 +166,11 @@ describe('Runtime authentication', () => {
 		const caller = createInMemoryRuntimeCaller('partial-refresh')
 
 		await runtime.handle(
-			{ requestId: 'partial-refresh', op: 'refreshServers' },
+			{
+				requestId: 'partial-refresh',
+				op: 'syncSchemas',
+				serverNames: ['broken', 'working'],
+			},
 			caller,
 		)
 
@@ -176,7 +180,7 @@ describe('Runtime authentication', () => {
 				kind: 'result',
 				result: {
 					status: 'completed',
-					refreshed: ['working'],
+					synced: ['working'],
 					failed: [
 						{
 							serverName: 'broken',
@@ -416,7 +420,7 @@ describe('Runtime authentication', () => {
 				error: {
 					code: 'reauth-required',
 					message:
-						'Credentials for fixture must be refreshed: OAuth client credentials must be entered interactively (Interactive terminal required.). Run mcpx @refresh in a terminal',
+						'Credentials for fixture must be refreshed: OAuth client credentials must be entered interactively (Interactive terminal required.). Run mcpx @login in a terminal',
 				},
 			},
 		])
@@ -445,7 +449,7 @@ describe('Runtime authentication', () => {
 		}
 
 		await runtime.handle(
-			{ requestId: 'manual', op: 'refreshServers', serverNames: ['fixture'] },
+			{ requestId: 'manual', op: 'syncSchemas', serverNames: ['fixture'] },
 			caller,
 		)
 

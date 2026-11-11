@@ -120,10 +120,18 @@ Focus on an internal mcpx command:
 mcpx @schema '.["@add"]'
 ```
 
-mcpx caches discovered tool schemas in the global registry. Cached schemas older
-than one day are refreshed opportunistically in a single background worker when
-mcpx starts, so normal commands do not block on schema discovery. Servers that
-have not discovered any tools yet are still retried synchronously during startup.
+mcpx caches discovered tool schemas so commands and `@schema` answer without
+asking the server. The cache is a hint, not the authority, and repairs itself
+([ADR 0011](docs/adr/0011-the-schema-cache-is-a-hint-kept-fresh-in-the-background.md)):
+
+- calling a tool the cache does not know, or omitting a field the cached schema
+  requires, re-lists that server before the call is rejected;
+- a server's Invalid Params rejection, a new session (for schemas over an hour
+  old) and `tools/list_changed` re-list it in the background;
+- `mcpxd` re-lists every schema older than a week when it starts and daily
+  while it runs.
+
+Background listings never open a browser; there is no manual refresh command.
 
 ## Control Commands
 
@@ -136,7 +144,6 @@ mcpx @add "{ name: '<server>', url: '<mcp-url>', bearer: 'env:<TOKEN_ENV>' }"
 mcpx @add "{ name: '<server>', transport: 'stdio', command: '<command>', args: ['<arg>'] }"
 mcpx @remove "{ name: '<server>' }"
 mcpx @login "{ name: '<server>' }"
-mcpx @refresh
 mcpx @daemon.status
 mcpx @daemon.stop
 mcpx @daemon.server
@@ -167,12 +174,6 @@ mcpx @add '{
   "env": { "OPEN_DESIGN_TOKEN": "..." }
 }'
 ```
-
-`@refresh` checks registered MCP servers concurrently: it makes each server's
-credentials usable, then refreshes its cached tool schemas. Progress for every
-server (token refresh, browser authorization URL, tool listing, result) is
-printed to stderr as it happens; stdout carries only the final report. A failing
-server is reported by name and does not prevent the others from being checked.
 
 Stdio servers are called through `mcpxd`, a user-local daemon that reuses stdio
 MCP sessions across CLI invocations. `mcpxd` starts on demand, keeps idle stdio
@@ -228,7 +229,7 @@ OAuth credentials repair themselves during ordinary tool calls:
 
 Providers that need a manual OAuth client can only prompt in an interactive
 terminal; without one, the call fails immediately with `reauth-required` and
-`mcpx @refresh` must be run in a terminal.
+`mcpx @login "{ name: '<server>' }"` must be run in a terminal.
 
 Tool calls use a 5 minute request timeout by default. Set
 `MCPX_TOOL_CALL_TIMEOUT_MS` when a remote MCP server legitimately needs longer.

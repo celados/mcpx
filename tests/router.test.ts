@@ -12,7 +12,6 @@ describe('router', () => {
 			'@add',
 			'@daemon',
 			'@login',
-			'@refresh',
 			'@remove',
 			'@skill-install',
 		])

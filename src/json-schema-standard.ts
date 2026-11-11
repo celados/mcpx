@@ -8,14 +8,33 @@ type StandardSchema = StandardSchemaV1<
 > &
 	StandardJSONSchemaV1<Record<string, unknown>, Record<string, unknown>>
 
-export function jsonSchemaToStandardSchema(schema: unknown): StandardSchema {
+export type StandardSchemaOptions = {
+	/**
+	 * Called when input misses a field the cached schema requires: returns the
+	 * server's current schema to judge the input by instead, or `undefined` to
+	 * keep the cached verdict. A stale cache must not reject a valid call.
+	 */
+	resync?: () => Promise<unknown>
+}
+
+export function jsonSchemaToStandardSchema(
+	schema: unknown,
+	options: StandardSchemaOptions = {},
+): StandardSchema {
 	const inputSchema = normalizeInputSchema(schema)
 
 	return {
 		'~standard': {
 			version: 1,
 			vendor: 'mcpx',
-			validate: (value: unknown) => validateObjectInput(value, inputSchema),
+			validate: async (value: unknown) => {
+				const result = validateObjectInput(value, inputSchema)
+				if (!result.issues || !options.resync || !isObject(value)) return result
+				const current = await options.resync()
+				return current === undefined
+					? result
+					: validateObjectInput(value, normalizeInputSchema(current))
+			},
 			jsonSchema: {
 				input: () => inputSchema,
 				// argc derives CLI parameter help from output schemas; MCP tool ingress
@@ -57,7 +76,7 @@ function validateObjectInput(
 	value: unknown,
 	schema: JsonSchema,
 ): StandardSchemaV1.Result<Record<string, unknown>> {
-	if (!value || typeof value !== 'object' || Array.isArray(value)) {
+	if (!isObject(value)) {
 		return {
 			issues: [{ message: 'Input must be a JSON object.' }],
 		}
@@ -82,4 +101,8 @@ function validateObjectInput(
 	// This adapter exists to expose argc-compatible schemas without pretending
 	// every provider's JSON Schema dialect can be locally enforced yet.
 	return { value: input }
+}
+
+function isObject(value: unknown): value is Record<string, unknown> {
+	return !!value && typeof value === 'object' && !Array.isArray(value)
 }
