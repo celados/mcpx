@@ -73,6 +73,7 @@ async function probeDaemon(): Promise<
 
 async function stopIncompatibleDaemon(): Promise<void> {
 	const socket = await connectDaemonSocket()
+	let daemonProtocol: number | undefined
 	try {
 		const hello = await requestJsonLine(socket, helloMessage())
 		if (
@@ -85,11 +86,27 @@ async function stopIncompatibleDaemon(): Promise<void> {
 				op: 'stop',
 			})
 		} else {
+			daemonProtocol = mismatchedProtocol(hello)
 			// V2 accepts its stop command after returning protocol-mismatch.
-			await requestJsonLine(socket, { op: 'stop' })
+			if (daemonProtocol === undefined)
+				await requestJsonLine(socket, { op: 'stop' })
 		}
 	} finally {
 		socket.end()
+	}
+	// V3 and later end the connection on a mismatch; speak their protocol on a
+	// new one, whose `hello` and `stop` every version keeps unchanged.
+	if (daemonProtocol !== undefined) {
+		const legacy = await connectDaemonSocket()
+		try {
+			await requestJsonLine(legacy, helloMessage(daemonProtocol))
+			await requestJsonLine(legacy, {
+				requestId: crypto.randomUUID(),
+				op: 'stop',
+			})
+		} finally {
+			legacy.end()
+		}
 	}
 
 	const deadline = Date.now() + START_TIMEOUT_MS
@@ -98,6 +115,17 @@ async function stopIncompatibleDaemon(): Promise<void> {
 		await Bun.sleep(CONNECT_RETRY_MS)
 	}
 	throw new Error('Incompatible mcpxd did not stop before the timeout.')
+}
+
+/** The protocol an older daemon named when it refused our handshake. */
+function mismatchedProtocol(message: unknown): number | undefined {
+	if (!isDaemonMessage(message) || message.ok) return undefined
+	if (message.error.code !== 'protocol-mismatch') return undefined
+	if (typeof message.protocolVersion === 'number')
+		return message.protocolVersion
+	// V3 named its protocol only in the message text.
+	const named = /expected (\d+)\./.exec(message.error.message)?.[1]
+	return named === undefined ? undefined : Number(named)
 }
 
 function isDaemonMessage(value: unknown): value is DaemonMessage {

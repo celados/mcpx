@@ -90,13 +90,13 @@ function handleConnection(server: net.Server, socket: Socket): void {
 					}
 					if (message.protocolVersion !== DAEMON_PROTOCOL_VERSION) {
 						phase = 'complete'
-						writeJsonLine(
-							socket,
-							errorResponse(
+						writeJsonLine(socket, {
+							...errorResponse(
 								'protocol-mismatch',
 								`Unsupported mcpxd protocol ${message.protocolVersion}; expected ${DAEMON_PROTOCOL_VERSION}.`,
 							),
-						)
+							protocolVersion: DAEMON_PROTOCOL_VERSION,
+						})
 						return
 					}
 					phase = 'ready'
