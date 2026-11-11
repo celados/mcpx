@@ -35,7 +35,7 @@ A resource server's `401` or `403 insufficient_scope` answer with its `WWW-Authe
 _Avoid_: Auth probe, auth discovery result
 
 **Authentication Flow**:
-One shared attempt to make a Credential Identity usable: a silent token refresh when possible, otherwise browser authorization. Calls and `@refresh` join the same flow and wait for its outcome; an Authorization Challenge starts or joins it too.
+One shared attempt to make a Credential Identity usable: a silent token refresh when possible, otherwise browser authorization. Calls, `@add`, and `@login` join the same flow and wait for its outcome; an Authorization Challenge starts or joins it too.
 _Avoid_: Per-command login, token retry
 
 **Caller Input**:
@@ -47,7 +47,7 @@ One caller-owned request that moves from accepted through queued or active work 
 _Avoid_: Detached job, background task
 
 **Schema Cache**:
-Rebuildable knowledge MCPX has observed about server tools and their schemas.
+Rebuildable knowledge MCPX has observed about server tools and their schemas. A hint for agents, never the authority on what a call accepts; repaired on evidence of drift and swept weekly in the background (ADR 0011).
 _Avoid_: Declared tools, registry schema
 
 **Active State**:

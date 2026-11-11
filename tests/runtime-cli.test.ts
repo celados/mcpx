@@ -109,7 +109,7 @@ describe('Runtime CLI adapter lifecycle', () => {
 		for (const child of children) expect(isAlive(child.pid)).toBe(false)
 	}, 10_000)
 
-	it('single-flights five explicit refresh CLI processes through one local token request', async () => {
+	it('single-flights five CLI calls to an uncached tool through one local token request', async () => {
 		// Keep the flow active while independently booting Bun processes reach the
 		// warm daemon; the assertion is about overlapping callers, not loader speed.
 		const fixture = startHttpFixture({ tokenDelayMs: 500 })
@@ -118,7 +118,7 @@ describe('Runtime CLI adapter lifecycle', () => {
 		// processes connect; start the daemon so this test isolates flow sharing.
 		expect((await runCli(['@daemon.status', ...rawContext])).exitCode).toBe(0)
 		const refreshes = Array.from({ length: 5 }, () =>
-			spawnObserved(['@refresh', ...rawContext]),
+			spawnObserved(['controlled.echo', ...rawContext]),
 		)
 		const results = await Promise.all(refreshes.map(waitForExit))
 
@@ -131,10 +131,10 @@ describe('Runtime CLI adapter lifecycle', () => {
 		for (const child of refreshes) expect(isAlive(child.pid)).toBe(false)
 	}, 10_000)
 
-	it('cancels an active refresh flow before Runtime stop completes', async () => {
+	it('cancels an active authorization flow before Runtime stop completes', async () => {
 		const fixture = startHttpFixture({ holdToken: true })
 		await seedExpiredOAuth(fixture.url, fixture.issuer)
-		const refresh = spawnObserved(['@refresh', ...rawContext])
+		const refresh = spawnObserved(['controlled.echo', ...rawContext])
 		await waitFor(async () => fixture.tokenRequests() === 1)
 
 		const stopped = await runCli(['@daemon.stop', ...rawContext])

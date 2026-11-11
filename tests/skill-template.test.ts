@@ -79,7 +79,8 @@ describe('mcpx skill template', () => {
 		expect(servers).toContain(
 			`mcpx @add '{"name":"sentry","url":"https://mcp.sentry.dev/mcp"}'`,
 		)
-		expect(servers).toContain('mcpx @refresh')
+		expect(servers).toContain(`mcpx @login "{ name: '<server>' }"`)
+		expect(servers).not.toContain('@refresh')
 	})
 
 	it('builds temporary mcpx skill markdown without project-local wording', () => {

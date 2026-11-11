@@ -61,12 +61,12 @@ describe('Runtime protocol v3', () => {
 		expect(
 			parseRuntimeIntent({
 				requestId: 'request-1',
-				op: 'refreshServers',
+				op: 'syncSchemas',
 				serverNames: ['fixture'],
 			}),
 		).toEqual({
 			requestId: 'request-1',
-			op: 'refreshServers',
+			op: 'syncSchemas',
 			serverNames: ['fixture'],
 		})
 

@@ -23,6 +23,9 @@ let lastActivityAt = Date.now()
 const SESSION_IDLE_MS = 15 * 60 * 1000
 const DAEMON_IDLE_MS = 30 * 60 * 1000
 const CLEANUP_INTERVAL_MS = 30 * 1000
+// mcpxd is the one Runtime per user, so its sweep is the exclusive background
+// schema upkeep (ADR 0011): once when it starts, then daily while it lives.
+const SCHEMA_SWEEP_INTERVAL_MS = 24 * 60 * 60 * 1000
 
 export async function runDaemonServer(): Promise<void> {
 	await ensureDaemonDir()
@@ -163,9 +166,16 @@ async function cleanupIdleRuntime(server: net.Server): Promise<void> {
 }
 
 async function getRuntime(): Promise<McpRuntime> {
-	runtimePromise ??= openRuntimeStores(daemonDir()).then(
-		(stores) => new McpRuntime(stores),
-	)
+	runtimePromise ??= openRuntimeStores(daemonDir()).then((stores) => {
+		const runtime = new McpRuntime(stores)
+		const sweep = () => {
+			if (!stopping) void runtime.sweepSchemas().catch(() => {})
+		}
+		// After the operation that started the Runtime, not ahead of it.
+		setTimeout(sweep, 0).unref()
+		setInterval(sweep, SCHEMA_SWEEP_INTERVAL_MS).unref()
+		return runtime
+	})
 	return runtimePromise
 }
 

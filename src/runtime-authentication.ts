@@ -219,7 +219,7 @@ function authorizationFailure(serverName: string, error: unknown): Error {
 		if (error.code === 'timeout') {
 			return new RuntimeOperationError(
 				'timeout',
-				`Authorization for ${serverName} was not completed within 5 minutes. Run mcpx @refresh to retry.`,
+				`Authorization for ${serverName} was not completed within 5 minutes. Retry the command, or run mcpx @login.`,
 			)
 		}
 		if (error.code === 'operation-failed')
@@ -275,7 +275,7 @@ function parseManualClient(
 		if (typeof input.reason === 'string' && input.reason) {
 			throw reauthRequired(
 				serverName,
-				`OAuth client credentials must be entered interactively (${input.reason}). Run mcpx @refresh in a terminal`,
+				`OAuth client credentials must be entered interactively (${input.reason}). Run mcpx @login in a terminal`,
 			)
 		}
 		throw new RuntimeOperationError(

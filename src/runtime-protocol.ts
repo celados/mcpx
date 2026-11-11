@@ -1,6 +1,6 @@
 import { MCPX_VERSION } from './version'
 
-export const DAEMON_PROTOCOL_VERSION = 3
+export const DAEMON_PROTOCOL_VERSION = 4
 
 export type NotificationMode = 'buffer' | 'discard'
 
@@ -83,8 +83,8 @@ export type RuntimeIntent =
 	| { requestId: string; op: 'removeServers'; serverNames: string[] }
 	| {
 			requestId: string
-			op: 'refreshServers'
-			serverNames?: string[]
+			op: 'syncSchemas'
+			serverNames: string[]
 			/** Replace each OAuth grant with a new browser sign-in. */
 			signIn?: boolean
 	  }
@@ -181,10 +181,10 @@ export function parseRuntimeIntent(
 				isStringArray(value.serverNames)
 				? (value as RuntimeIntent)
 				: invalidFrame()
-		case 'refreshServers':
+		case 'syncSchemas':
 			return hasOnly(value, ['requestId', 'op', 'serverNames', 'signIn']) &&
-				hasRequired(value, ['requestId', 'op']) &&
-				(value.serverNames === undefined || isStringArray(value.serverNames)) &&
+				hasRequired(value, ['requestId', 'op', 'serverNames']) &&
+				isStringArray(value.serverNames) &&
 				(value.signIn === undefined || typeof value.signIn === 'boolean')
 				? (value as RuntimeIntent)
 				: invalidFrame()

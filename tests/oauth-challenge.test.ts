@@ -167,7 +167,7 @@ describe('OAuth discovered from a call-time challenge', () => {
 		// The grant still works; a refresh leaves it alone, a sign-in does not.
 		const refresh = createInMemoryRuntimeCaller('refresh')
 		await runtime.handle(
-			{ requestId: 'refresh', op: 'refreshServers', serverNames: ['wb'] },
+			{ requestId: 'refresh', op: 'syncSchemas', serverNames: ['wb'] },
 			refresh,
 		)
 		expect(browserUrls).toHaveLength(1)
@@ -175,7 +175,7 @@ describe('OAuth discovered from a call-time challenge', () => {
 		await runtime.handle(
 			{
 				requestId: 'login',
-				op: 'refreshServers',
+				op: 'syncSchemas',
 				serverNames: ['wb'],
 				signIn: true,
 			},
@@ -183,7 +183,7 @@ describe('OAuth discovered from a call-time challenge', () => {
 		)
 		expect(login.frames.find((frame) => frame.kind === 'result')).toMatchObject(
 			{
-				result: { status: 'completed', refreshed: ['wb'], failed: [] },
+				result: { status: 'completed', synced: ['wb'], failed: [] },
 			},
 		)
 		expect(browserUrls).toHaveLength(2)
