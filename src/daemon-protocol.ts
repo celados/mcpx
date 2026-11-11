@@ -30,9 +30,19 @@ export type ClientMessage = {
 	clientVersion: string
 }
 
+/**
+ * Every protocol version keeps the `hello` handshake and the `stop` intent
+ * unchanged, and a `protocol-mismatch` answer names the daemon's own version:
+ * that is how a newer client stops an older mcpxd to replace it.
+ */
 export type DaemonMessage =
 	| { ok: true; protocolVersion?: number; result?: unknown }
-	| { ok: false; error: { code: string; message: string } }
+	| {
+			ok: false
+			error: { code: string; message: string }
+			/** The daemon's protocol, on `protocol-mismatch`. */
+			protocolVersion?: number
+	  }
 
 export function notificationModeFromEnv(): NotificationMode {
 	const raw = process.env[NOTIFICATION_MODE_ENV]
@@ -43,10 +53,12 @@ export function notificationModeFromEnv(): NotificationMode {
 	)
 }
 
-export function helloMessage(): ClientMessage {
+export function helloMessage(
+	protocolVersion: number = DAEMON_PROTOCOL_VERSION,
+): ClientMessage {
 	return {
 		op: 'hello',
-		protocolVersion: DAEMON_PROTOCOL_VERSION,
+		protocolVersion,
 		clientVersion: MCPX_VERSION,
 	}
 }

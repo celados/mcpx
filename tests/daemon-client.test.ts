@@ -63,6 +63,24 @@ describe('MCP Runtime process client', () => {
 		expect(fakeDaemon).toBeUndefined()
 	})
 
+	for (const strictHello of ['message', 'field'] as const) {
+		it(`stops an older daemon that refuses the new handshake (${strictHello})`, async () => {
+			await startFakeDaemon({
+				protocolVersion: 3,
+				version: '0.15.0',
+				strictHello,
+			})
+
+			const status = (await requestRuntime(
+				{ requestId: crypto.randomUUID(), op: 'status' },
+				mainPath,
+			)) as { protocolVersion: number }
+
+			expect(status.protocolVersion).toBe(4)
+			expect(fakeDaemon).toBeUndefined()
+		})
+	}
+
 	it('stops an older same-protocol Runtime before restart', async () => {
 		await startFakeDaemon({ protocolVersion: 3, version: '0.0.0' })
 
@@ -175,6 +193,8 @@ describe('MCP Runtime process client', () => {
 		version: string
 		closeOnIntent?: boolean
 		inputThenTerminal?: boolean
+		/** Behave like a real v3+ mcpxd: refuse other protocols and hang up. */
+		strictHello?: 'message' | 'field'
 	}): Promise<void> {
 		await fs.mkdir(path.dirname(daemonSocketPath()), { recursive: true })
 		fakeDaemon = net.createServer((socket) => {
@@ -186,9 +206,27 @@ describe('MCP Runtime process client', () => {
 					const message = JSON.parse(buffer.slice(0, newline)) as {
 						op?: string
 						requestId?: string
+						protocolVersion?: number
 					}
 					buffer = buffer.slice(newline + 1)
-					if (message.op === 'hello') {
+					if (
+						message.op === 'hello' &&
+						options.strictHello &&
+						message.protocolVersion !== options.protocolVersion
+					) {
+						writeJsonLine(socket, {
+							ok: false,
+							error: {
+								code: 'protocol-mismatch',
+								message: `Unsupported mcpxd protocol ${message.protocolVersion}; expected ${options.protocolVersion}.`,
+							},
+							...(options.strictHello === 'field'
+								? { protocolVersion: options.protocolVersion }
+								: {}),
+						})
+						socket.end()
+						return
+					} else if (message.op === 'hello') {
 						writeJsonLine(socket, {
 							ok: true,
 							protocolVersion: options.protocolVersion,
