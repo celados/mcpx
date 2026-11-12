@@ -106,16 +106,17 @@ Call MCP tools through dotted command paths and pass one object input token.
 mcpx <server>.<tool> '{ }'
 \`\`\`
 
-For larger payloads, prefer file or heredoc input:
+For larger payloads, put the whole object in a quoted heredoc or file as YAML
+(multi-line text as \`|\` block scalars; field values are always literal):
 
 \`\`\`bash
-mcpx <server>.<tool> @payload.json
+mcpx <server>.<tool> - <<'EOF'
+example: true
+text: |
+  multi-line text
+EOF
 
-mcpx <server>.<tool> - <<'JSON'
-{
-  "example": true
-}
-JSON
+mcpx <server>.<tool> @payload.yaml
 \`\`\`
 
 ## Notifications
