@@ -5,7 +5,7 @@
     "": {
       "name": "mcpx",
       "dependencies": {
-        "@celados/argc": "^10.0.0",
+        "@celados/argc": "^10.2.0",
         "@clack/prompts": "^1.2.0",
         "@modelcontextprotocol/client": "^2.4.0",
         "@valibot/to-json-schema": "^1.6.0",
@@ -22,7 +22,7 @@
     },
   },
   "packages": {
-    "@celados/argc": ["@celados/argc@10.0.0", "https://npm.celados.com/@celados/argc/-/@celados/argc-10.0.0.tgz", { "dependencies": { "yaml": "^2.9.1" }, "peerDependencies": { "@standard-schema/spec": "^1.0.0", "@valibot/to-json-schema": "^1.8.0", "valibot": "^1.5.0" } }, "sha512-5PyPq2Ix8iXx9iHg+NIej2o27TqaIWg4l0vxKijoOPMckqP3YU9QwjN+8J+QVqDZsBCSfCNOhzHU0kJXE5LRrg=="],
+    "@celados/argc": ["@celados/argc@10.2.0", "https://npm.celados.com/@celados/argc/-/@celados/argc-10.2.0.tgz", { "dependencies": { "yaml": "^2.9.1" }, "peerDependencies": { "@standard-schema/spec": "^1.0.0", "@valibot/to-json-schema": "^1.8.0", "valibot": "^1.5.0" } }, "sha512-cRjltgtnTDmM9WAUQ3Xgm/076R5qns6F+vkzmGxzOnZbY+HiPYAR2nXBsjSbWvBdsmi6gK/oe44NQHjXANBbQw=="],
 
     "@clack/core": ["@clack/core@1.4.3", "", { "dependencies": { "fast-wrap-ansi": "^0.2.0", "sisteransi": "^1.0.5" } }, "sha512-/kr3UWNtdJfxZtPgDqUOmG2pvwlmcLGheex5yiZKdwbzZJxhV+HMNR9QNmyY5cGwTNV6LrR7Jtp+KjhUAP1qBQ=="],
 
