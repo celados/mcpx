@@ -17,18 +17,18 @@ The surface depends on the registry, so read only the slice you need: `mcpx @sch
 ## Calling a tool — `.<server>.<tool>`
 
 - Call as `mcpx <server>.<tool> "<object>"`. The object is the complete tool input: one quoted token, or the whole object as YAML/JSON5 from `@file` or stdin (`-`).
-- Put multi-line text in a quoted heredoc with `|` block scalars. Field values are literal: never pass `-` or `@path` as a field value, and never mix the object with `--flag`s. Quote scalars YAML would retype (`'1.10'`, `'012'`, `'true'`). A file or stdin starting with `{` is read as JSON5.
+- Put multi-line text in a quoted heredoc with `|` block scalars. Field values are literal: no field takes `-` or `@path`. Quote scalars YAML would retype (`'1.10'`, `'012'`, `'true'`). A file or stdin starting with `{` is read as JSON5.
 - Tool results may include `$notifications` (progress, server events). Ignore them unless the task depends on them; format and special cases: `mcpx @skill references/notifications.md`.
 
-## Registering servers — `@add`, `@login`, `@remove`
+## Registering servers — `.{"@add","@login","@remove"}` (quote the `@`)
 
-Only when the user asks. `@add` takes an HTTP `url` (default) or `transport: 'stdio'` with `command`/`args`; after that both behave identically. Bearer auth goes in `bearer`, and `env:NAME` keeps the secret out of the registry (an array round-robins credentials). `@login "{ name: '<server>' }"` needs a TTY; otherwise ask the user to run it. Input shapes: `mcpx @add --help`.
+Only when the user asks. After `@add`, HTTP and stdio servers behave identically. Register a bearer token as `env:NAME` so the secret stays out of the registry and argv. `@login "{ name: '<server>' }"` needs a TTY; otherwise ask the user to run it.
 
-## Project-local skills — `@skill-install`
+## Project-local skills — `."@skill-install"`
 
 When the user wants a project to expose only an approved set of servers, `mcpx @skill-install "{ servers: 'posthog,sentry' }"` writes `.agents/skills/mcpx/` (router plus install and server-recovery references). `{ show: 'sentry' }` prints a one-server skill to stdout without writing files. It does not replace `@add`.
 
-## Daemon — `@daemon`
+## Daemon — `."@daemon"`
 
 `mcpxd` keeps sessions warm and is normally invisible. For stuck sessions, surprising eviction or schema drift read `mcpx @skill references/daemon.md` before filing an issue.
 
