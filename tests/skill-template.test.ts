@@ -64,8 +64,8 @@ describe('mcpx skill template', () => {
 			`mcpx @schema '.posthog.{"projects-get","alerts-list","alert-create"}'`,
 		)
 		expect(content).toContain("mcpx <server>.<tool> '{ }'")
-		expect(content).toContain('mcpx <server>.<tool> @payload.json')
-		expect(content).toContain("mcpx <server>.<tool> - <<'JSON'")
+		expect(content).toContain('mcpx <server>.<tool> @payload.yaml')
+		expect(content).toContain("mcpx <server>.<tool> - <<'EOF'")
 		expect(content).toContain('## Troubleshooting')
 		expect(content).toContain('references/install.md')
 		expect(content).toContain('references/servers.md')

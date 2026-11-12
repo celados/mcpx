@@ -37,8 +37,7 @@ export function jsonSchemaToStandardSchema(
 			},
 			jsonSchema: {
 				input: () => inputSchema,
-				// argc derives CLI parameter help from output schemas; MCP tool ingress
-				// and handler-facing input are the same contract here.
+				// MCP tool ingress and handler-facing input are the same contract here.
 				output: () => inputSchema,
 			},
 		},

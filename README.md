@@ -74,25 +74,33 @@ mcpx posthog.projects-get '{}'
 mcpx sentry.whoami '{}'
 ```
 
-For complex payloads, use stdin to keep the input readable:
+For complex payloads, put the whole object on stdin as YAML — block scalars need
+no escaping:
 
 ```bash
-mcpx cf-graphql.graphql_query - <<'JSON'
-{
-  "query": "query GetWorkerAnalytics($accountTag: String!, $scriptName: String!, $since: Time!, $until: Time!) { viewer { accounts(filter: {accountTag: $accountTag}) { workersInvocationsAdaptive(limit: 1000, filter: {scriptName: $scriptName, datetime_geq: $since, datetime_leq: $until}, orderBy: [datetimeHour_ASC]) { dimensions { datetimeHour scriptName status } sum { requests subrequests errors duration } quantiles { cpuTimeP50 cpuTimeP99 } } } } }",
-  "operationName": "GetWorkerAnalytics",
-  "variables": {
-    "accountTag": "abc123def456",
-    "scriptName": "my-worker",
-    "since": "2026-04-20T00:00:00Z",
-    "until": "2026-04-27T00:00:00Z"
+mcpx cf-graphql.graphql_query - <<'EOF'
+query: |
+  query GetWorkerAnalytics($accountTag: String!, $scriptName: String!, $since: Time!, $until: Time!) {
+    viewer { accounts(filter: {accountTag: $accountTag}) {
+      workersInvocationsAdaptive(limit: 1000, filter: {scriptName: $scriptName, datetime_geq: $since, datetime_leq: $until}, orderBy: [datetimeHour_ASC]) {
+        dimensions { datetimeHour scriptName status }
+        sum { requests subrequests errors duration }
+        quantiles { cpuTimeP50 cpuTimeP99 }
+      }
+    } }
   }
-}
-JSON
+operationName: GetWorkerAnalytics
+variables:
+  accountTag: abc123def456
+  scriptName: my-worker
+  since: "2026-04-20T00:00:00Z"
+  until: "2026-04-27T00:00:00Z"
+EOF
 ```
 
-The command accepts exactly one input object. Pass it inline, as `@file`, or
-through `-` stdin.
+The command accepts exactly one input object: inline JSON5, or the whole object
+from `@file` / `-` stdin as YAML (JSON5 when it starts with `{`). Field values
+are literal; there is no per-field `-` / `@path`.
 
 ## Discover Schemas
 

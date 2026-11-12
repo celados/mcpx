@@ -9,7 +9,7 @@ or another server registered in the user's global mcpx registry.
 - Run `mcpx` directly.
 - Start with the server inventory instead of dumping every registered schema.
 - Call MCP tools as `mcpx <server>.<tool> "<object>"`.
-- Pass one quoted object token, `@file`, or stdin as the complete tool input.
+- Pass one quoted object token, or the whole object as YAML/JSON5 via `@file` / stdin (`-`), as the complete tool input.
 - Use focused schema selectors before calling tools on large MCP surfaces.
 - Do not hand-edit `~/.agents/mcpx/servers.json` or token cache files unless the user explicitly asks for registry surgery.
 - Treat MCP server registration and OAuth setup as human-owned configuration. If a required server is missing or unauthenticated, stop and ask the user to configure it.
@@ -50,17 +50,23 @@ mcpx posthog.projects-get '{}'
 mcpx sentry.search-issues '{"query":"is:unresolved"}'
 ```
 
-For non-trivial payloads, prefer `@file` or heredoc input:
+For non-trivial payloads, put the whole input object in a quoted heredoc (or an
+`@file`) as YAML — nothing to escape, multi-line text goes in `|` block scalars:
 
 ```bash
-mcpx <server>.<tool> @payload.json
+mcpx <server>.<tool> - <<'EOF'
+query: is:unresolved
+note: |
+  multi-line text
+  stays verbatim
+EOF
 
-mcpx <server>.<tool> - <<'JSON'
-{
-  "query": "is:unresolved"
-}
-JSON
+mcpx <server>.<tool> @payload.yaml
 ```
+
+Field values are always literal: never pass `-` or `@path` as a field value, and
+never mix the object with `--flag`s. Quote scalars YAML would type (`'1.10'`,
+`'012'`, `'true'`). A file or stdin starting with `{` is read as JSON5 instead.
 
 Default output is optimized for agents (YAML for structured content,
 direct text passthrough, media saved as `file saved <path>`). Pass
