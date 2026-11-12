@@ -64,7 +64,12 @@ const outputContext = s(
 const addInput = s(
 	v.object({
 		name: v.pipe(v.string(), v.description('Global server name')),
-		transport: v.optional(v.picklist(['http', 'stdio'])),
+		transport: v.optional(
+			v.pipe(
+				v.picklist(['http', 'stdio']),
+				v.description('Default http; stdio needs command'),
+			),
+		),
 		url: v.optional(
 			v.pipe(
 				v.string(),
@@ -72,12 +77,29 @@ const addInput = s(
 				v.description('MCP Streamable HTTP endpoint URL'),
 			),
 		),
-		bearer: v.optional(v.union([v.string(), v.array(v.string())])),
+		bearer: v.optional(
+			v.pipe(
+				v.union([v.string(), v.array(v.string())]),
+				v.description(
+					"Token or env reference ('env:NAME', kept live); several round-robin. Prefer env:NAME, or pass the object via stdin so a literal stays off argv",
+				),
+			),
+		),
 		command: v.optional(
 			v.pipe(v.string(), v.description('Stdio MCP server command')),
 		),
-		args: v.optional(v.union([v.string(), v.array(v.string())])),
-		env: v.optional(v.record(v.string(), v.string())),
+		args: v.optional(
+			v.pipe(
+				v.union([v.string(), v.array(v.string())]),
+				v.description('Stdio command arguments'),
+			),
+		),
+		env: v.optional(
+			v.pipe(
+				v.record(v.string(), v.string()),
+				v.description('Environment for the stdio process'),
+			),
+		),
 	}),
 )
 
@@ -234,7 +256,6 @@ function buildRouter(registry: RegistryView, schemas?: SchemaResync): Router {
 		'@remove': c
 			.meta({
 				description: 'Remove a global MCP server and its cached credentials.',
-				examples: [`mcpx @remove "{ name: 'posthog,sentry' }"`],
 			})
 			.input(removeInput),
 		'@login': c
@@ -254,6 +275,7 @@ function buildRouter(registry: RegistryView, schemas?: SchemaResync): Router {
 				}),
 				server: c.meta({
 					description: 'Run the local mcpxd daemon server.',
+					hidden: true,
 				}),
 			},
 		),
@@ -261,7 +283,6 @@ function buildRouter(registry: RegistryView, schemas?: SchemaResync): Router {
 			.meta({
 				description:
 					'Generate a project skill or print a temporary server skill for agents.',
-				examples: [`mcpx @skill-install "{ servers: 'posthog,sentry' }"`],
 			})
 			.input(skillInput),
 	}
