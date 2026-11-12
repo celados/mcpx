@@ -234,18 +234,13 @@ function buildRouter(registry: RegistryView, schemas?: SchemaResync): Router {
 		'@remove': c
 			.meta({
 				description: 'Remove a global MCP server and its cached credentials.',
-				examples: [
-					`mcpx @remove "{ name: 'posthog' }"`,
-					`mcpx @remove "{ name: 'posthog,sentry' }"`,
-					'mcpx @remove',
-				],
+				examples: [`mcpx @remove "{ name: 'posthog,sentry' }"`],
 			})
 			.input(removeInput),
 		'@login': c
 			.meta({
 				description:
 					'Sign in to an OAuth MCP server in the browser, replacing its current grant (e.g. to switch accounts). The old grant stays until the new sign-in succeeds.',
-				examples: [`mcpx @login "{ name: 'higgsfield' }"`],
 			})
 			.input(loginInput),
 		'@daemon': group(
@@ -253,15 +248,12 @@ function buildRouter(registry: RegistryView, schemas?: SchemaResync): Router {
 			{
 				status: c.meta({
 					description: 'Show local mcpxd daemon status.',
-					examples: ['mcpx @daemon.status'],
 				}),
 				stop: c.meta({
 					description: 'Stop local mcpxd and its managed stdio MCP processes.',
-					examples: ['mcpx @daemon.stop'],
 				}),
 				server: c.meta({
 					description: 'Run the local mcpxd daemon server.',
-					examples: ['mcpx @daemon.server'],
 				}),
 			},
 		),
@@ -269,11 +261,7 @@ function buildRouter(registry: RegistryView, schemas?: SchemaResync): Router {
 			.meta({
 				description:
 					'Generate a project skill or print a temporary server skill for agents.',
-				examples: [
-					'mcpx @skill-install',
-					`mcpx @skill-install "{ servers: 'posthog,sentry' }"`,
-					`mcpx @skill-install "{ show: 'sentry' }"`,
-				],
+				examples: [`mcpx @skill-install "{ servers: 'posthog,sentry' }"`],
 			})
 			.input(skillInput),
 	}
