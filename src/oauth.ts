@@ -465,7 +465,7 @@ class OAuthCallback {
 
 	async listen(port: number): Promise<void> {
 		if (this.#server && (port === 0 || this.#server.port === port)) return
-		this.#server?.stop(true)
+		await this.#server?.stop(true)
 		this.#server = Bun.serve({
 			hostname: LOCALHOST,
 			port,
@@ -506,7 +506,7 @@ class OAuthCallback {
 	#complete(outcome: URLSearchParams | Error): void {
 		if (this.#settled) return
 		this.#settled = true
-		this.#server?.stop()
+		void this.#server?.stop()
 		if (outcome instanceof Error) this.#fail(outcome)
 		else this.#finish(outcome)
 	}

@@ -19,7 +19,7 @@ describe('OAuth discovered from a call-time challenge', () => {
 	const fixtures: Bun.Server<unknown>[] = []
 
 	afterEach(async () => {
-		for (const fixture of fixtures.splice(0)) fixture.stop(true)
+		await Promise.all(fixtures.splice(0).map((fixture) => fixture.stop(true)))
 		await Promise.all(
 			roots.splice(0).map((root) => fs.rm(root, { recursive: true })),
 		)

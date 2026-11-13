@@ -12,8 +12,8 @@ import { authorizeOAuth, oauthAccessToken } from '../src/oauth'
 describe('oauth', () => {
 	const fixtures: Bun.Server<unknown>[] = []
 
-	afterEach(() => {
-		for (const fixture of fixtures.splice(0)) fixture.stop(true)
+	afterEach(async () => {
+		await Promise.all(fixtures.splice(0).map((fixture) => fixture.stop(true)))
 	})
 
 	it('treats a token expiring within a minute as unusable', () => {
@@ -47,7 +47,11 @@ describe('oauth', () => {
 		await authorizeOAuth(flow.options)
 
 		expect(fixture.registrations).toHaveLength(1)
-		const redirectUri = (fixture.registrations[0]?.redirect_uris as string[])[0]
+		const registration = fixture.registrations[0]
+		expect(registration).toBeDefined()
+		const redirectUri = (
+			registration?.redirect_uris as string[] | undefined
+		)?.[0]
 		expect(redirectUri).toMatch(/^http:\/\/127\.0\.0\.1:\d+\/callback$/)
 		const authorize = new URL(flow.browserUrls[0]!)
 		expect(authorize.searchParams.get('resource')).toBe(`${fixture.origin}/mcp`)

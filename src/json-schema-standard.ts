@@ -44,14 +44,6 @@ export function jsonSchemaToStandardSchema(
 	}
 }
 
-export function emptyObjectSchema(): StandardSchema {
-	return jsonSchemaToStandardSchema({
-		type: 'object',
-		properties: {},
-		additionalProperties: true,
-	})
-}
-
 function normalizeInputSchema(schema: unknown): JsonSchema {
 	if (!schema || typeof schema !== 'object' || Array.isArray(schema)) {
 		return { type: 'object', properties: {}, additionalProperties: true }

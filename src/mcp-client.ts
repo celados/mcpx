@@ -54,7 +54,7 @@ export type ConnectMcpClientOptions = {
 	onNotification?: (notification: { method: string; params?: unknown }) => void
 }
 
-export async function withMcpClient<T>(
+async function withMcpClient<T>(
 	server: ServerConfig,
 	run: (client: Client) => Promise<T>,
 ): Promise<T> {

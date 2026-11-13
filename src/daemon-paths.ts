@@ -13,14 +13,6 @@ export function daemonSocketPath(): string {
 	return path.join(daemonDir(), 'mcpxd.sock')
 }
 
-export function daemonLogPath(): string {
-	return path.join(daemonDir(), LOG_DIR, 'daemon.log')
-}
-
-export function serverLogPath(serverKey: string): string {
-	return path.join(daemonDir(), LOG_DIR, `${serverKey}.stderr.log`)
-}
-
 export async function ensureDaemonDir(): Promise<void> {
 	await fs.mkdir(path.join(daemonDir(), LOG_DIR), {
 		recursive: true,

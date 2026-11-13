@@ -97,8 +97,6 @@ export type RuntimeHello = {
 	clientVersion: string
 }
 
-export type RuntimeConnectionInput = RuntimeHello | RuntimeIntent
-
 export type RuntimeConnectionAcceptance =
 	| { kind: 'hello' }
 	| { kind: 'intent'; intent: RuntimeIntent }

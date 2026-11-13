@@ -40,11 +40,6 @@ export class McpRuntime {
 		return this.#upkeep.sweep(staleMs)
 	}
 
-	/** Settles once every background schema listing started so far is done. */
-	schemaUpkeepIdle(): Promise<void> {
-		return this.#upkeep.idle()
-	}
-
 	async cleanupIdleSessions(maxIdleMs: number): Promise<void> {
 		await this.#sessions.cleanupIdle(maxIdleMs)
 	}
@@ -339,7 +334,7 @@ export class McpRuntime {
 	}
 }
 
-export type RuntimeSyncOutcome =
+type RuntimeSyncOutcome =
 	| {
 			status: 'completed'
 			synced: string[]
@@ -347,7 +342,7 @@ export type RuntimeSyncOutcome =
 	  }
 	| { status: 'disconnected' }
 
-export type RuntimeSyncFailure = {
+type RuntimeSyncFailure = {
 	serverName: string
 	message: string
 }

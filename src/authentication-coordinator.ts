@@ -107,7 +107,7 @@ export class AuthenticationCoordinator {
 				new AuthenticationCancelled('MCP Runtime is stopping.'),
 			)
 		}
-		await Promise.all(entries.map((entry) => entry.run).filter(Boolean))
+		await Promise.all(entries.flatMap((entry) => entry.run ?? []))
 	}
 
 	#createFlow<T>(identity: string, flow: AuthenticationFlow<T>): ActiveFlow<T> {

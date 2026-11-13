@@ -20,7 +20,7 @@ describe('Runtime authentication', () => {
 	const servers: Bun.Server<unknown>[] = []
 
 	afterEach(async () => {
-		for (const server of servers.splice(0)) server.stop(true)
+		await Promise.all(servers.splice(0).map((server) => server.stop(true)))
 		await Promise.all(
 			roots.splice(0).map((root) => fs.rm(root, { recursive: true })),
 		)

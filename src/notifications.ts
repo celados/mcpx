@@ -1,7 +1,7 @@
 import type { McpNotification } from './daemon-protocol'
 
-export const NOTIFICATION_BUFFER_CAP_BYTES = 65_536
-export const NOTIFICATION_BUFFER_CAP_COUNT = 100
+const NOTIFICATION_BUFFER_CAP_BYTES = 65_536
+const NOTIFICATION_BUFFER_CAP_COUNT = 100
 
 export type NotificationBuffer = {
 	add: (notification: McpNotification) => void

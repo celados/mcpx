@@ -17,22 +17,7 @@ export function authFromBearerValues(
 	}
 }
 
-export function bearerAuthRef(
-	auth: Extract<AuthDiscovery, { kind: 'bearer' }>,
-): string[] {
-	return auth.credentials.map((credential) => {
-		if (credential.kind === 'env') return `env:${credential.name}`
-		return `literal:${hashSecret(credential.value)}`
-	})
-}
-
-export function describeBearerAuth(
-	auth: Extract<AuthDiscovery, { kind: 'bearer' }>,
-): string {
-	return `bearer ${bearerAuthRef(auth).join(',')}`
-}
-
-export function resolveBearerHeaderForProbe(
+function resolveBearerHeaderForProbe(
 	auth: Extract<AuthDiscovery, { kind: 'bearer' }>,
 ): string {
 	const credential = auth.credentials[0]

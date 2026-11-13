@@ -15,7 +15,9 @@ describe('Runtime CLI adapter lifecycle', () => {
 
 	afterEach(async () => {
 		await runCli(['@daemon.stop', ...rawContext]).catch(() => {})
-		for (const server of fixtureServers.splice(0)) server.stop(true)
+		await Promise.all(
+			fixtureServers.splice(0).map((server) => server.stop(true)),
+		)
 		await fs.rm(home, { recursive: true, force: true })
 	})
 

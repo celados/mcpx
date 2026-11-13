@@ -10,7 +10,7 @@ const CONNECTED_FRESH_MS = 60 * 60 * 1000
 /** A rejection re-lists at most this often, so a broken call cannot loop. */
 const REJECTED_FRESH_MS = 60 * 1000
 /** The sweep re-lists every server whose schema is older than this. */
-export const SWEEP_STALE_MS = 7 * 24 * 60 * 60 * 1000
+const SWEEP_STALE_MS = 7 * 24 * 60 * 60 * 1000
 const SWEEP_CONCURRENCY = 2
 
 /**

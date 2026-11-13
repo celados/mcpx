@@ -24,7 +24,7 @@ const LEGACY_CREDENTIALS_FILE = 'tokens.json'
 const LEGACY_REGISTRY_BACKUP = 'servers.v1.backup.json'
 const LEGACY_CREDENTIALS_BACKUP = 'tokens.v1.backup.json'
 
-export type DeclaredBearerCredential =
+type DeclaredBearerCredential =
 	| { kind: 'env'; name: string }
 	| { kind: 'stored'; key: string }
 

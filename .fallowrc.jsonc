@@ -1,4 +1,7 @@
 {
 	"$schema": "https://raw.githubusercontent.com/fallow-rs/fallow/main/schema.json",
-	"ignorePatterns": ["dist/**", "dist-bun/**"],
+	// Spawned as child processes by the tests and the prototype, never imported.
+	"entry": ["tests/fixtures/*.mjs", "prototypes/**/*.mjs"],
+	// Every module exposes its internals to tests as `__test`.
+	"ignoreExports": [{ "file": "src/**", "exports": ["__test"] }],
 }

@@ -28,11 +28,11 @@ type SkillMarkdownOptions = {
 	projectLocal?: boolean
 }
 
-export function mcpxSkillDir(cwd: string): string {
+function mcpxSkillDir(cwd: string): string {
 	return path.join(cwd, '.agents', 'skills', 'mcpx')
 }
 
-export function mcpxSkillPath(cwd: string): string {
+function mcpxSkillPath(cwd: string): string {
 	return path.join(mcpxSkillDir(cwd), 'SKILL.md')
 }
 

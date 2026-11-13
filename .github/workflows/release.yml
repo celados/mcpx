@@ -35,6 +35,9 @@ jobs:
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
       - run: bun run check
+        env:
+          FIRECRAWL_API_KEY: test
+          LINEAR_API_KEY: test
       - run: bun run build
 
       - name: Create release

@@ -6,7 +6,7 @@ import type {
 	ToolDefinition,
 } from './types'
 
-import { authFromBearerValues, describeBearerAuth } from './bearer'
+import { authFromBearerValues } from './bearer'
 import { authorizationChallenge, listMcpTools } from './mcp-client'
 import { assignCommandNames } from './names'
 
@@ -119,17 +119,6 @@ export function normalizeTools(tools: McpTool[]): ToolDefinition[] {
 		if (tool._meta) normalized._meta = tool._meta
 		return normalized
 	})
-}
-
-export function describeAuth(auth: AuthDiscovery): string {
-	switch (auth.kind) {
-		case 'none':
-			return 'none'
-		case 'bearer':
-			return describeBearerAuth(auth)
-		case 'oauth':
-			return 'oauth'
-	}
 }
 
 function isJsonSchema(value: unknown): value is Record<string, unknown> {
