@@ -8,12 +8,13 @@
 	"type": "module",
 	"scripts": {
 		"build": "./scripts/build.sh",
-		"check": "bun run typecheck && bun test && bunx oxfmt --check package.json tsconfig.json README.md .gitignore .oxfmtrc.json src tests skills docs",
-		"format": "bunx oxfmt package.json tsconfig.json README.md .gitignore .oxfmtrc.json src tests skills docs",
+		"check": "vp check && harness typecheck && fallow dead-code && bun test",
+		"format": "vp fmt",
 		"prototype:cancellation": "bun prototypes/mcp-cancellation/run.ts",
 		"prototype:cancellation:evidence": "bun prototypes/mcp-cancellation/run.ts --evidence",
-		"typecheck": "tsc --project tsconfig.json --noEmit",
-		"test": "bun test"
+		"typecheck": "harness typecheck",
+		"test": "bun test",
+		"prepare": "vp config"
 	},
 	"dependencies": {
 		"@celados/argc": "^11.0.0",
@@ -24,10 +25,13 @@
 		"yaml": "^2.9.0"
 	},
 	"devDependencies": {
+		"@celados/harness": "^0.1.3",
 		"@modelcontextprotocol/server": "^2.4.0",
 		"@types/bun": "^1.3.12",
-		"oxfmt": "^0.46.0",
+		"fallow": "^3.42.0",
+		"tsrs": "0.24.0-ts7.1.0-beta",
 		"typescript": "^7.0.2",
+		"vite-plus": "^1.6.0",
 		"zod": "^4.6.7"
 	}
 }
