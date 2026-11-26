@@ -104,28 +104,15 @@ are literal; there is no per-field `-` / `@path`.
 
 ## Discover Schemas
 
-Print the command schema for agents:
+A selector is the call path itself. Quote any that holds `*` or `{`:
 
 ```bash
-mcpx @schema
-```
-
-Focus on one server:
-
-```bash
-mcpx @schema .posthog
-```
-
-Focus on a set of servers:
-
-```bash
-mcpx @schema '.{posthog,sentry}'
-```
-
-Focus on an internal mcpx command:
-
-```bash
-mcpx @schema '.["@add"]'
+mcpx @schema                              # one line per server (whole tree when small)
+mcpx @schema 'posthog.*'                  # one server's tools, with signatures
+mcpx @schema '{posthog,sentry}.*'         # several servers
+mcpx @schema 'sentry.find_*'              # tool names by glob
+mcpx @schema @add                         # an internal mcpx command
+mcpx @search edit timeline --in higgsfield  # by intent, when you don't know the name
 ```
 
 mcpx caches discovered tool schemas so commands and `@schema` answer without

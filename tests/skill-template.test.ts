@@ -15,11 +15,13 @@ import {
 
 describe('mcpx skill template', () => {
 	it('builds argc schema selectors for selected servers', () => {
-		expect(buildSchemaSelector(['posthog'])).toBe('.posthog')
-		expect(buildSchemaSelector(['posthog', 'sentry'])).toBe('.{posthog,sentry}')
-		expect(buildSchemaSelector(['cf-docs'])).toBe('."cf-docs"')
+		expect(buildSchemaSelector(['posthog'])).toBe('posthog.*')
+		expect(buildSchemaSelector(['posthog', 'sentry'])).toBe(
+			'{posthog,sentry}.*',
+		)
+		expect(buildSchemaSelector(['cf-docs'])).toBe('cf-docs.*')
 		expect(buildSchemaSelector(['cf-docs', 'sentry'])).toBe(
-			'.{"cf-docs",sentry}',
+			'{cf-docs,sentry}.*',
 		)
 	})
 
@@ -58,11 +60,9 @@ describe('mcpx skill template', () => {
 		expect(content).toContain(
 			'description: "Use project-approved MCP tools through mcpx. Trigger when the user asks to inspect or operate services backed by these MCP servers: posthog, sentry."',
 		)
-		expect(content).toContain("mcpx @schema '.{posthog,sentry}'")
-		expect(content).toContain('`.server.{tool-a,tool-b,tool-c}`')
-		expect(content).toContain(
-			`mcpx @schema '.posthog.{"projects-get","alerts-list","alert-create"}'`,
-		)
+		expect(content).toContain("mcpx @schema '{posthog,sentry}.*'")
+		expect(content).toContain("`'posthog.{tool-a,tool-b}'`")
+		expect(content).toContain('mcpx @search <keywords> --in posthog')
 		expect(content).toContain("mcpx <server>.<tool> '{ }'")
 		expect(content).toContain('mcpx <server>.<tool> @payload.yaml')
 		expect(content).toContain("mcpx <server>.<tool> - <<'EOF'")
@@ -89,7 +89,7 @@ describe('mcpx skill template', () => {
 		expect(content).toContain('servers: ["slack"]')
 		expect(content).toContain('configured MCP servers')
 		expect(content).not.toContain('project-approved MCP servers')
-		expect(content).toContain("mcpx @schema '.slack'")
+		expect(content).toContain("mcpx @schema 'slack.*'")
 		expect(content).not.toContain('## Troubleshooting')
 		expect(content).not.toContain('references/install.md')
 	})

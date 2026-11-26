@@ -40,16 +40,9 @@ export function buildSchemaSelector(servers: string[]): string {
 	if (servers.length === 0) {
 		throw new Error('Select at least one MCP server.')
 	}
-	if (servers.length === 1) {
-		return `.${schemaSelectorKey(servers[0]!)}`
-	}
-	return `.{${servers.map(schemaSelectorKey).join(',')}}`
-}
-
-function schemaSelectorKey(value: string): string {
-	return /^[A-Za-z_$][A-Za-z0-9_$]*$/.test(value)
-		? value
-		: JSON.stringify(value)
+	// Naming a group shows one folded line; `.*` lists its tools.
+	if (servers.length === 1) return `${servers[0]!}.*`
+	return `{${servers.join(',')}}.*`
 }
 
 export function buildMcpxSkillMarkdown(
@@ -58,6 +51,7 @@ export function buildMcpxSkillMarkdown(
 ): string {
 	const projectLocal = options.projectLocal ?? true
 	const selector = buildSchemaSelector(servers)
+	const first = servers[0]!
 	const serverList = servers.map((server) => `- ${server}`).join('\n')
 	const description = projectLocal
 		? `Use project-approved MCP tools through mcpx. Trigger when the user asks to inspect or operate services backed by these MCP servers: ${servers.join(', ')}.`
@@ -85,18 +79,18 @@ Inspect the available tool surface before calling tools:
 mcpx @schema '${selector}'
 \`\`\`
 
-Use schema selectors to narrow large MCP surfaces before choosing a tool:
+A selector is the call path itself; quote any with \`*\` or \`{\`:
 
-- \`.server\` shows one server, for example \`mcpx @schema .posthog\`
-- \`.server."tool-name"\` shows one kebab-case tool, for example \`mcpx @schema '.posthog."projects-get"'\`
-- \`.{a,b}\` selects multiple keys at the current level
-- \`.server.{tool-a,tool-b,tool-c}\` shows a short list of candidate tools
+- \`'${first}.*'\` lists one server's tools with their signatures
+- \`${first}.<tool>\` shows one tool
+- \`'${first}.{tool-a,tool-b}'\` shows a shortlist
+- \`'${first}.*keyword*'\` matches tool names by glob
 
-Normal workflow: inspect the ${scope} servers first, identify likely
-tool names, then follow the schema status line. If the schema says it was fully
-output, call the chosen tool directly. If it says only a compact outline was
-shown, run a narrower selector such as
-\`mcpx @schema '.posthog.{"projects-get","alerts-list","alert-create"}'\`.
+Don't know the tool name? Search by intent:
+\`mcpx @search <keywords> --in ${first}\`.
+
+Follow the schema's \`status:\` line: if it says fully shown, call the tool
+directly; otherwise run the \`next:\` it gives or a narrower selector.
 
 ## Call
 

@@ -1,6 +1,6 @@
 # mcpx notifications
 
-Selector for any server: `mcpx @schema .<server>`. Most tools emit no notifications, so read this only when a result carries `$notifications` or a trailing `$notification:` line.
+Selector for any server: `mcpx @schema '<server>.*'`. Most tools emit no notifications, so read this only when a result carries `$notifications` or a trailing `$notification:` line.
 
 When an MCP server emits events during a call (progress reporting, server-side
 state changes, custom events), mcpx merges them into default structured output

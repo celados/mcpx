@@ -39,7 +39,7 @@ describe('mcpx skill command', () => {
 
 		expect(output).toContain('servers: ["slack"]')
 		expect(output).toContain('configured MCP servers')
-		expect(output).toContain("mcpx @schema '.slack'")
+		expect(output).toContain("mcpx @schema 'slack.*'")
 		await expect(
 			readFile(join(cwd, '.agents', 'skills', 'mcpx', 'SKILL.md'), 'utf8'),
 		).rejects.toThrow()

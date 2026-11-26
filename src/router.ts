@@ -1,11 +1,4 @@
-import {
-	c,
-	cli,
-	createDefaultSchemaExplorer,
-	domainError,
-	group,
-	type Router,
-} from '@celados/argc'
+import { c, cli, domainError, group, type Router } from '@celados/argc'
 import {
 	cancel,
 	confirm,
@@ -164,10 +157,6 @@ export async function runMcpx(
 		version: MCPX_VERSION,
 		description: 'Global MCP registry and agent-facing command surface.',
 		context: outputContext,
-		schemaExplorer: createDefaultSchemaExplorer({
-			selectionDepth: 2,
-			maxLines: 1000,
-		}),
 		skill: embedSkill(),
 	})
 

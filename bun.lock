@@ -5,7 +5,7 @@
     "": {
       "name": "mcpx",
       "dependencies": {
-        "@celados/argc": "^11.5.0",
+        "@celados/argc": "^12.0.0",
         "@clack/prompts": "^1.2.0",
         "@modelcontextprotocol/client": "^2.4.0",
         "@valibot/to-json-schema": "^1.6.0",
@@ -33,7 +33,7 @@
 
     "@blazediff/core": ["@blazediff/core@1.10.0", "", {}, "sha512-AOQff0zgR7cGsZL+4E7hVkmujoPUpm0J9xzWGWZj5wCjd3gmxESXAPfKyuzs93VdpQNFhHlBhfOjrcZ+XTERtQ=="],
 
-    "@celados/argc": ["@celados/argc@11.5.0", "https://npm.celados.com/@celados/argc/-/@celados/argc-11.5.0.tgz", { "dependencies": { "yaml": "^2.9.1" }, "peerDependencies": { "@standard-schema/spec": "^1.0.0", "@valibot/to-json-schema": "^1.8.0", "valibot": "^1.5.0" } }, "sha512-5qtLOOagqryy0huptEYeM+mxWmZZnOvReltZBuAKgiScC4wI0lWkB8sfaZp8gO60e0SyaZjev+m42Z6aHVlsIw=="],
+    "@celados/argc": ["@celados/argc@12.0.0", "https://npm.celados.com/@celados/argc/-/@celados/argc-12.0.0.tgz", { "dependencies": { "yaml": "^2.9.1" }, "peerDependencies": { "@standard-schema/spec": "^1.0.0", "@valibot/to-json-schema": "^1.8.0", "valibot": "^1.5.0" } }, "sha512-rrD7z9Sj9G45SdTe2dRoe10gJoF1uUjzsPuw7yfX6/H6hBSAlcwGxrvEHmDun0ya+2YmPZ0XnGNEF+OR0TMO3g=="],
 
     "@celados/harness": ["@celados/harness@0.1.6", "https://npm.celados.com/@celados/harness/-/@celados/harness-0.1.6.tgz", { "peerDependencies": { "@celados/glaze": ">=0.33.0", "@convex-dev/eslint-plugin": ">=5.0.0", "@effect/tsgo": ">=0.70.0", "@gdp-ts/core": ">=0.1.0", "@stylexjs/eslint-plugin": ">=0.19.0", "eslint-plugin-solid": ">=0.19.0", "fallow": ">=3.42.0", "tsrs": ">=0.25.0-ts7.1.0-beta", "typescript": ">=7.0.2", "vite-plus": ">=1.7.0" }, "optionalPeers": ["@celados/glaze", "@convex-dev/eslint-plugin", "@effect/tsgo", "@gdp-ts/core", "@stylexjs/eslint-plugin", "eslint-plugin-solid"], "bin": { "harness": "dist/cli.mjs" } }, "sha512-Mfj+/rxrfX1O6eV1ntNJwD+RrMBwSOkXpoq7MOKVaN8av5OCFWVVZrYKzhiYT0tTBfQHpEX4TNRViexffri5uw=="],
 

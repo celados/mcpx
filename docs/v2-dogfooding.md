@@ -29,7 +29,7 @@ Expected output:
 Inspect the kebab-case tool with a quoted selector key:
 
 ```sh
-bun src/main.ts @schema '.notification-fixture."progress-stream"'
+bun src/main.ts @schema notification-fixture.progress-stream
 ```
 
 `progress-stream` emits `notifications/progress` during a call.
