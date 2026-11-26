@@ -28,8 +28,10 @@ type SkillMarkdownOptions = {
 	projectLocal?: boolean
 }
 
+const MCPX_SERVERS_SKILL_NAME = 'mcpx-servers'
+
 function mcpxSkillDir(cwd: string): string {
-	return path.join(cwd, '.agents', 'skills', 'mcpx')
+	return path.join(cwd, '.agents', 'skills', MCPX_SERVERS_SKILL_NAME)
 }
 
 function mcpxSkillPath(cwd: string): string {
@@ -54,18 +56,18 @@ export function buildMcpxSkillMarkdown(
 	const first = servers[0]!
 	const serverList = servers.map((server) => `- ${server}`).join('\n')
 	const description = projectLocal
-		? `Use project-approved MCP tools through mcpx. Trigger when the user asks to inspect or operate services backed by these MCP servers: ${servers.join(', ')}.`
-		: `Use configured MCP tools through mcpx. Trigger when the user asks to inspect or operate services backed by these MCP servers: ${servers.join(', ')}.`
+		? `Use this project's approved MCP servers through mcpx: ${servers.join(', ')}. Trigger when inspecting or operating services backed by these servers.`
+		: `Use configured MCP servers through mcpx: ${servers.join(', ')}. Trigger when inspecting or operating services backed by these servers.`
 	const scope = projectLocal ? 'project-approved' : 'configured'
 	const troubleshooting = projectLocal ? projectTroubleshootingSection() : ''
 
 	return `---
-name: ${JSON.stringify('mcpx')}
+name: ${MCPX_SERVERS_SKILL_NAME}
 servers: [${servers.map((server) => JSON.stringify(server)).join(', ')}]
 description: ${JSON.stringify(description)}
 ---
 
-# MCPX
+# MCPX Servers
 
 Use this skill when the task needs one of these ${scope} MCP servers:
 
@@ -73,7 +75,7 @@ ${serverList}
 
 ## Discover
 
-Inspect the available tool surface before calling tools:
+Inspect the ${scope} tool surface before calling tools:
 
 \`\`\`bash
 mcpx @schema '${selector}'
@@ -94,14 +96,12 @@ directly; otherwise run the \`next:\` it gives or a narrower selector.
 
 ## Call
 
-Call MCP tools through dotted command paths and pass one object input token.
-
 \`\`\`bash
-mcpx <server>.<tool> '{ }'
+mcpx <server>.<tool> '<object>'
 \`\`\`
 
-For larger payloads, put the whole object in a quoted heredoc or file as YAML
-(multi-line text as \`|\` block scalars; field values are always literal):
+- Omit the input object when the tool takes no arguments (defaults to \`{}\`).
+- For multi-line or large payloads, pass the whole object as YAML via quoted heredoc (\`|\` block scalars) or \`@file\`:
 
 \`\`\`bash
 mcpx <server>.<tool> - <<'EOF'
@@ -113,49 +113,11 @@ EOF
 mcpx <server>.<tool> @payload.yaml
 \`\`\`
 
-## Notifications
+- Field values are always literal (no per-field \`-\` or \`@path\`). Quote YAML scalars that would retype (\`'1.10'\`, \`'012'\`, \`'true'\`).
+- Default output is agent-optimized YAML (media saved as \`file saved <path>\`). Pass \`--context "{ output: 'raw' }"\` only when exact server output matters.
+- Tool results may include \`$notifications\` or a trailing \`$notification:\` line. Ignore them unless the task depends on progress or server events; see \`mcpx @skill references/notifications.md\`.
 
-Most tool calls emit no notifications and this section never applies. When an
-MCP server pushes events during a call (progress, schema changes, custom
-events), mcpx merges them into default structured output under \`$notifications\`:
-
-\`\`\`yaml
-count: 1
-$notifications:
-  - method: notifications/progress
-    params:
-      progressToken: "..."
-      progress: 3
-      total: 4
-      message: step 3
-\`\`\`
-
-For non-JSON text, binary, or mixed content, mcpx falls back to a trailing
-sentinel line:
-
-\`\`\`
-<tool result lines>
-$notification: [{"method":"notifications/progress","params":{...}}]
-\`\`\`
-
-Each entry has \`method\` plus method-specific \`params\`. Special cases:
-
-- \`notifications/progress\` may carry \`aggregatedCount\` on the last entry per progress token, meaning intermediate progress was collapsed (first and last preserved verbatim).
-- \`notifications/tools/list_changed\` is handled by mcpx automatically; no agent action required.
-- \`$oversize\` appears in raw context when the buffer cap was reached; default output renders it as \`notifications oversize, saved to <path>\`.
-
-In raw context with a structured result and non-empty notifications, the
-sentinel line is replaced by a JSON envelope:
-
-\`\`\`json
-{ "result": <tool-result>, "notifications": [ ... ] }
-\`\`\`
-
-Ignore notifications unless the task specifically depends on progress or
-server events. Parse only when \`$notifications\`, the sentinel line, or the raw
-envelope is present.
-
-Do not hand-edit MCP configuration in this project. Servers are registered in the user's global mcpx registry.
+Do not hand-edit MCP configuration in this project. Servers live in the user's global mcpx registry; for registry management (\`@add\`, \`@remove\`, \`@login\`) or \`mcpxd\` troubleshooting, run \`mcpx @skill\`.
 ${troubleshooting}`
 }
 
@@ -248,11 +210,12 @@ below.
 ## Diagnose
 
 \`\`\`bash
-mcpx
+mcpx @schema
 \`\`\`
 
-If that command is missing, read [install.md](install.md) first. Then compare
-the listing to the project-approved servers named in \`SKILL.md\`.
+If that command is missing, read [install.md](install.md) first. Otherwise
+compare the \`## <server>.*\` groups against the project-approved servers in
+\`SKILL.md\` (or probe one directly with \`mcpx @schema <server>\`).
 
 ## Register missing servers
 
@@ -275,8 +238,8 @@ mcpx @login "{ name: '<server>' }"
 
 If the current session is not a TTY, ask the user to run it in their terminal.
 
-Once \`mcpx\` lists the server and a focused \`@schema\` call succeeds, return
-to the skill.
+Once \`mcpx @schema <server>\` succeeds for each needed server, return to the
+skill.
 `
 }
 

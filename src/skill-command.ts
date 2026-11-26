@@ -70,7 +70,7 @@ async function promptForServers(
 	})
 
 	if (isCancel(result)) {
-		cancel('No mcpx skill generated.')
+		cancel('No mcpx-servers skill generated.')
 		process.exit(1)
 	}
 

@@ -260,9 +260,9 @@ mcpx @skill-install "{ servers: 'posthog,sentry' }"
 This writes:
 
 ```text
-.agents/skills/mcpx/SKILL.md
-.agents/skills/mcpx/references/install.md
-.agents/skills/mcpx/references/servers.md
+.agents/skills/mcpx-servers/SKILL.md
+.agents/skills/mcpx-servers/references/install.md
+.agents/skills/mcpx-servers/references/servers.md
 ```
 
 The generated skill instructs agents to discover tools with focused schema

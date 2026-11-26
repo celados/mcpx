@@ -37,11 +37,15 @@ describe('mcpx skill command', () => {
 			show: 'slack',
 		})
 
+		expect(output).toContain('name: mcpx-servers')
 		expect(output).toContain('servers: ["slack"]')
 		expect(output).toContain('configured MCP servers')
 		expect(output).toContain("mcpx @schema 'slack.*'")
 		await expect(
-			readFile(join(cwd, '.agents', 'skills', 'mcpx', 'SKILL.md'), 'utf8'),
+			readFile(
+				join(cwd, '.agents', 'skills', 'mcpx-servers', 'SKILL.md'),
+				'utf8',
+			),
 		).rejects.toThrow()
 	})
 
@@ -51,7 +55,7 @@ describe('mcpx skill command', () => {
 			servers: 'posthog,slack',
 		})
 
-		const skillDir = join(cwd, '.agents', 'skills', 'mcpx')
+		const skillDir = join(cwd, '.agents', 'skills', 'mcpx-servers')
 		expect(output).toContain(`Wrote ${skillDir}`)
 		const skill = await readFile(join(skillDir, 'SKILL.md'), 'utf8')
 		const servers = await readFile(

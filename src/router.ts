@@ -271,7 +271,7 @@ function buildRouter(registry: RegistryView, schemas?: SchemaResync): Router {
 		'@skill-install': c
 			.meta({
 				description:
-					'Generate a project skill or print a temporary server skill for agents.',
+					'Generate a project mcpx-servers skill or print a temporary server skill for agents.',
 			})
 			.input(skillInput),
 	}

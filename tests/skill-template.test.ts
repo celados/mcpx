@@ -54,18 +54,19 @@ describe('mcpx skill template', () => {
 			'utf8',
 		)
 
-		expect(skillDir).toBe(join(cwd, '.agents', 'skills', 'mcpx'))
-		expect(content).toContain('name: "mcpx"')
+		expect(skillDir).toBe(join(cwd, '.agents', 'skills', 'mcpx-servers'))
+		expect(content).toContain('name: mcpx-servers')
 		expect(content).toContain('servers: ["posthog", "sentry"]')
 		expect(content).toContain(
-			'description: "Use project-approved MCP tools through mcpx. Trigger when the user asks to inspect or operate services backed by these MCP servers: posthog, sentry."',
+			'description: "Use this project\'s approved MCP servers through mcpx: posthog, sentry. Trigger when inspecting or operating services backed by these servers."',
 		)
 		expect(content).toContain("mcpx @schema '{posthog,sentry}.*'")
 		expect(content).toContain("`'posthog.{tool-a,tool-b}'`")
 		expect(content).toContain('mcpx @search <keywords> --in posthog')
-		expect(content).toContain("mcpx <server>.<tool> '{ }'")
+		expect(content).toContain("mcpx <server>.<tool> '<object>'")
 		expect(content).toContain('mcpx <server>.<tool> @payload.yaml')
 		expect(content).toContain("mcpx <server>.<tool> - <<'EOF'")
+		expect(content).toContain('mcpx @skill references/notifications.md')
 		expect(content).toContain('## Troubleshooting')
 		expect(content).toContain('references/install.md')
 		expect(content).toContain('references/servers.md')
@@ -73,6 +74,7 @@ describe('mcpx skill template', () => {
 		expect(install).toContain(
 			'https://raw.githubusercontent.com/celados/mcpx/main/install.sh',
 		)
+		expect(servers).toContain('mcpx @schema')
 		expect(servers).toContain(
 			`mcpx @add '{"name":"posthog","url":"https://mcp.posthog.com/mcp","bearer":"env:POSTHOG_TOKEN"}'`,
 		)
@@ -86,10 +88,13 @@ describe('mcpx skill template', () => {
 	it('builds temporary mcpx skill markdown without project-local wording', () => {
 		const content = buildMcpxSkillMarkdown(['slack'], { projectLocal: false })
 
+		expect(content).toContain('name: mcpx-servers')
 		expect(content).toContain('servers: ["slack"]')
 		expect(content).toContain('configured MCP servers')
 		expect(content).not.toContain('project-approved MCP servers')
 		expect(content).toContain("mcpx @schema 'slack.*'")
+		expect(content).toContain("`'slack.{tool-a,tool-b}'`")
+		expect(content).not.toContain('posthog')
 		expect(content).not.toContain('## Troubleshooting')
 		expect(content).not.toContain('references/install.md')
 	})
