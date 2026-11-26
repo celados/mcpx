@@ -202,6 +202,30 @@ describe('Runtime state stores', () => {
 		expect((await stores.credentials.read()).oauth).toEqual({})
 	})
 
+	it('keeps a server description in the Schema Cache, not the declaration', async () => {
+		const root = await fs.mkdtemp(path.join(tmpdir(), 'mcpx-runtime-stores-'))
+		roots.push(root)
+		const stores = await openRuntimeStores(root)
+		await stores.upsertServer('sentry', {
+			url: 'http://127.0.0.1:1/mcp',
+			auth: { kind: 'none' },
+			description: 'Search and triage Sentry issues.',
+			discoveredAt: '2026-08-01T00:00:00.000Z',
+			tools: [{ name: 'search', commandName: 'search' }],
+		})
+
+		const reopened = await openRuntimeStores(root)
+		expect((await reopened.schemas.read()).servers.sentry).toMatchObject({
+			description: 'Search and triage Sentry issues.',
+		})
+		expect((await reopened.registry.read()).servers.sentry).not.toHaveProperty(
+			'description',
+		)
+		expect((await reopened.readSnapshot()).servers.sentry?.description).toBe(
+			'Search and triage Sentry issues.',
+		)
+	})
+
 	it('reopens the published state without reviving a legacy registry', async () => {
 		const root = await fs.mkdtemp(path.join(tmpdir(), 'mcpx-runtime-stores-'))
 		roots.push(root)

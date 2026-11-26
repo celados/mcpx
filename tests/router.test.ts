@@ -17,10 +17,15 @@ describe('router', () => {
 		])
 	})
 
-	it('describes server groups by tool count', () => {
-		expect(__test.describeServerTools(0)).toBe('(0 tools)')
-		expect(__test.describeServerTools(1)).toBe('(1 tool)')
-		expect(__test.describeServerTools(123)).toBe('(123 tools)')
+	it('describes server groups by what the server says it is for', () => {
+		expect(
+			__test.describeServer('sentry', {
+				description: 'Search and triage Sentry issues.',
+			}),
+		).toBe('Search and triage Sentry issues.')
+		// An older cache entry has no description until its next listing.
+		expect(__test.describeServer('sentry', {})).toBe('sentry')
+		expect(__test.describeServer('sentry', { description: '' })).toBe('sentry')
 	})
 
 	it('includes title and safety annotations in tool descriptions', () => {

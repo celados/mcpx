@@ -1,13 +1,15 @@
+import type { ServerSchemaState } from './runtime-stores'
 import type {
 	AuthDiscovery,
 	DiscoveryResult,
 	McpTool,
 	ServerConfig,
+	ServerListing,
 	ToolDefinition,
 } from './types'
 
 import { authFromBearerValues } from './bearer'
-import { authorizationChallenge, listMcpTools } from './mcp-client'
+import { authorizationChallenge, listMcpServer } from './mcp-client'
 import { assignCommandNames } from './names'
 
 export type DiscoverServerOptions = {
@@ -43,8 +45,9 @@ export async function discoverServer(
 	if (options.headers) server.headers = options.headers
 
 	try {
-		const tools = await listMcpTools(server, options.name)
-		server.tools = normalizeTools(tools)
+		const listing = await listMcpServer(server)
+		server.tools = normalizeTools(listing.tools)
+		if (listing.description) server.description = listing.description
 		return {
 			server,
 			status: 'ready',
@@ -90,8 +93,9 @@ async function discoverStdioServer(
 	}
 
 	try {
-		const tools = await listMcpTools(server, options.name)
-		server.tools = normalizeTools(tools)
+		const listing = await listMcpServer(server)
+		server.tools = normalizeTools(listing.tools)
+		if (listing.description) server.description = listing.description
 		return {
 			server,
 			status: 'ready',
@@ -103,7 +107,21 @@ async function discoverStdioServer(
 	}
 }
 
-export function normalizeTools(tools: McpTool[]): ToolDefinition[] {
+/** The Schema Cache entry a successful listing leaves behind (ADR 0011). */
+export function observedSchema(
+	listing: ServerListing,
+	checkedAt: string,
+): ServerSchemaState {
+	const schema: ServerSchemaState = {
+		tools: normalizeTools(listing.tools),
+		discoveredAt: checkedAt,
+		refreshStatus: { checkedAt, status: 'ok' },
+	}
+	if (listing.description) schema.description = listing.description
+	return schema
+}
+
+function normalizeTools(tools: McpTool[]): ToolDefinition[] {
 	const names = tools.map((tool) => tool.name)
 	const commandNames = assignCommandNames(names)
 	return tools.map((tool) => {

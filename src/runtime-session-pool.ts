@@ -5,15 +5,15 @@ import type { OAuthChallenge } from './oauth'
 import type { RuntimeCaller } from './runtime-caller'
 import type { NotificationMode } from './runtime-protocol'
 import type { DeclaredServer, RuntimeStores } from './runtime-stores'
-import type { McpTool, ServerConfig, ToolDefinition } from './types'
+import type { ServerConfig, ServerListing } from './types'
 
+import { observedSchema } from './discovery'
 import {
 	authorizationChallenge,
 	connectMcpClient,
-	listAllMcpTools,
+	listServer,
 	toolCallRequestOptions,
 } from './mcp-client'
-import { assignCommandNames } from './names'
 import {
 	createNotificationBuffer,
 	flushNotificationBuffer,
@@ -147,23 +147,23 @@ export class RuntimeSessionPool {
 		await call.settled
 	}
 
-	async listTools(
+	async listServer(
 		serverName: string,
 		caller: RuntimeCaller,
 		options: ListToolsOptions = {},
-	): Promise<Awaited<ReturnType<typeof listAllMcpTools>>> {
+	): Promise<ServerListing> {
 		this.#assertAccepting()
 		const resolved = await this.#resolveServer(serverName)
 		this.#assertAccepting()
 		const session = this.#sessionFor(serverName, resolved)
-		let tools: Awaited<ReturnType<typeof listAllMcpTools>> | undefined
+		let listing: ServerListing | undefined
 		let failure: RuntimeOperationError | undefined
 		const childCaller: RuntimeCaller = {
 			id: `${caller.id}:schema:${serverName}`,
 			onDisconnect: caller.onDisconnect,
 			requestInput: caller.requestInput,
 			send: async (frame) => {
-				if (frame.kind === 'result') tools = frame.result as typeof tools
+				if (frame.kind === 'result') listing = frame.result as ServerListing
 				else if (frame.kind === 'error')
 					failure = new RuntimeOperationError(
 						frame.error.code,
@@ -186,7 +186,7 @@ export class RuntimeSessionPool {
 					}, toolCallRequestOptions().timeout)
 					timeout.unref()
 					try {
-						return await listAllMcpTools(
+						return await listServer(
 							(await this.#ensureConnected(session, credential)).client,
 						)
 					} finally {
@@ -198,7 +198,7 @@ export class RuntimeSessionPool {
 		)
 		await call.settled
 		if (failure) throw failure
-		if (!tools) {
+		if (!listing) {
 			throw new RuntimeOperationError(
 				call.cancellationCause === 'timeout' ? 'timeout' : 'cancelled',
 				call.cancellationCause === 'timeout'
@@ -206,7 +206,7 @@ export class RuntimeSessionPool {
 					: `Listing tools for ${serverName} was cancelled.`,
 			)
 		}
-		return tools
+		return listing
 	}
 
 	#authorize(
@@ -302,16 +302,12 @@ export class RuntimeSessionPool {
 			const toolsChanged = buffer.toolsChanged() || session.pendingToolsChanged
 			session.pendingToolsChanged = false
 			if (toolsChanged) {
-				const tools = await listAllMcpTools(connection.client)
+				const listing = await listServer(connection.client)
 				await this.#stores.updateState((state) => {
-					state.schemas.servers[input.serverName] = {
-						tools: withCommandNames(tools),
-						discoveredAt: new Date().toISOString(),
-						refreshStatus: {
-							checkedAt: new Date().toISOString(),
-							status: 'ok',
-						},
-					}
+					state.schemas.servers[input.serverName] = observedSchema(
+						listing,
+						new Date().toISOString(),
+					)
 				})
 			}
 			return { result, notifications, toolsChanged }
@@ -577,26 +573,4 @@ function sortValue(value: unknown): unknown {
 			.sort(([left], [right]) => left.localeCompare(right))
 			.map(([key, item]) => [key, sortValue(item)]),
 	)
-}
-
-function withCommandNames(tools: McpTool[]): ToolDefinition[] {
-	const names = assignCommandNames(tools.map((tool) => tool.name))
-	return tools.map((tool) => {
-		const normalized: ToolDefinition = {
-			name: tool.name,
-			commandName: names.get(tool.name) ?? tool.name,
-		}
-		if (tool.title) normalized.title = tool.title
-		if (tool.description) normalized.description = tool.description
-		if (
-			tool.inputSchema &&
-			typeof tool.inputSchema === 'object' &&
-			!Array.isArray(tool.inputSchema)
-		) {
-			normalized.inputSchema = tool.inputSchema as Record<string, unknown>
-		}
-		if (tool.annotations) normalized.annotations = tool.annotations
-		if (tool._meta) normalized._meta = tool._meta
-		return normalized
-	})
 }

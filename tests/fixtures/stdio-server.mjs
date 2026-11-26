@@ -2,7 +2,11 @@ import { McpServer } from '@modelcontextprotocol/server'
 import { StdioServerTransport } from '@modelcontextprotocol/server/stdio'
 import { z } from 'zod'
 
-const server = new McpServer({ name: 'mcpx-stdio-fixture', version: '1.0.0' })
+const server = new McpServer({
+	name: 'mcpx-stdio-fixture',
+	version: '1.0.0',
+	description: 'Echo, PID, and CWD tools for mcpx tests.',
+})
 let counter = 0
 
 server.registerTool(

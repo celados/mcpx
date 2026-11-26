@@ -47,7 +47,7 @@ One caller-owned request that moves from accepted through queued or active work 
 _Avoid_: Detached job, background task
 
 **Schema Cache**:
-Rebuildable knowledge MCPX has observed about server tools and their schemas. A hint for agents, never the authority on what a call accepts; repaired on evidence of drift and swept weekly in the background (ADR 0011).
+Rebuildable knowledge MCPX has observed about servers: what each says it is for (from its initialize handshake), its tools, and their schemas. A hint for agents, never the authority on what a call accepts; repaired on evidence of drift and swept weekly in the background (ADR 0011).
 _Avoid_: Declared tools, registry schema
 
 **Active State**:

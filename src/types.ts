@@ -30,6 +30,7 @@ export type HttpServerConfig = {
 	headers?: Record<string, string>
 	auth: AuthDiscovery
 	discoveredAt?: string
+	description?: string
 	tools?: ToolDefinition[]
 	refreshStatus?: ServerRefreshStatus
 }
@@ -41,6 +42,7 @@ export type StdioServerConfig = {
 	env?: Record<string, string>
 	cwd?: string
 	discoveredAt?: string
+	description?: string
 	tools?: ToolDefinition[]
 	refreshStatus?: ServerRefreshStatus
 }
@@ -64,6 +66,13 @@ export type DiscoveryResult = {
 	server: ServerConfig
 	status: 'ready' | 'auth-required' | 'unreachable'
 	message?: string
+}
+
+/** What one listing observes about a server: its tools and what it is for. */
+export type ServerListing = {
+	tools: McpTool[]
+	/** One line from the server's own initialize handshake, never a count. */
+	description?: string
 }
 
 export type McpTool = {

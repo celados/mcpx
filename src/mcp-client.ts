@@ -12,7 +12,12 @@ import {
 import { StdioClientTransport } from '@modelcontextprotocol/client/stdio'
 
 import type { OAuthChallenge } from './oauth'
-import type { McpTool, ServerConfig, ToolAnnotations } from './types'
+import type {
+	McpTool,
+	ServerConfig,
+	ServerListing,
+	ToolAnnotations,
+} from './types'
 
 import { resolveHeaders } from './headers'
 import { MCPX_VERSION } from './version'
@@ -26,6 +31,15 @@ type ListToolsClient = {
 		nextCursor?: string | undefined
 	}>
 }
+
+type ListServerClient = ListToolsClient & {
+	getServerVersion: () => ServerInfo | undefined
+	getInstructions: () => string | undefined
+}
+
+type ServerInfo = { name: string; title?: unknown; description?: unknown }
+
+const SERVER_DESCRIPTION_MAX = 120
 
 type RawMcpTool = {
 	name: string
@@ -204,11 +218,71 @@ function stdioTransportParams(server: ServerConfig) {
 	return params
 }
 
-export async function listMcpTools(
+export async function listMcpServer(
 	server: ServerConfig,
-	_serverName = 'stdio',
-): Promise<McpTool[]> {
-	return withMcpClient(server, async (client) => listAllMcpTools(client))
+): Promise<ServerListing> {
+	return withMcpClient(server, async (client) => listServer(client))
+}
+
+/** One listing of a connected server: every tool page plus its handshake. */
+export async function listServer(
+	client: ListServerClient,
+): Promise<ServerListing> {
+	const listing: ServerListing = { tools: await listAllMcpTools(client) }
+	const description = serverDescription(
+		client.getServerVersion(),
+		client.getInstructions(),
+	)
+	if (description) listing.description = description
+	return listing
+}
+
+/**
+ * What a server says it is for, as one line: `serverInfo.description`, else
+ * the first sentence of its `instructions`, else `serverInfo.title`. The
+ * server name is the caller's last resort, so it is not returned here.
+ */
+export function serverDescription(
+	info: ServerInfo | undefined,
+	instructions: string | undefined,
+): string | undefined {
+	const candidates = [
+		info?.description,
+		typeof instructions === 'string' ? firstSentence(instructions) : undefined,
+		info?.title,
+	]
+	for (const candidate of candidates) {
+		if (typeof candidate !== 'string') continue
+		const line = oneLine(candidate)
+		if (line) return line
+	}
+	return undefined
+}
+
+function firstSentence(text: string): string {
+	// Headings name the server again; the first prose paragraph says what it does.
+	const paragraph =
+		text
+			.split(/\n\s*\n/)
+			.map((part) =>
+				part
+					.split('\n')
+					.filter((line) => !/^\s*#/.test(line))
+					.map((line) => line.replace(/^\s*(?:[>*-]\s*)+/, ''))
+					.join(' ')
+					.trim(),
+			)
+			.find(Boolean) ?? ''
+	const end = paragraph.search(/[.!?。！？](\s|$)/)
+	return end === -1 ? paragraph : paragraph.slice(0, end + 1)
+}
+
+function oneLine(text: string): string {
+	const line = text.replace(/\s+/g, ' ').trim()
+	if (line.length <= SERVER_DESCRIPTION_MAX) return line
+	const cut = line.slice(0, SERVER_DESCRIPTION_MAX - 1)
+	const space = cut.lastIndexOf(' ')
+	return `${(space > SERVER_DESCRIPTION_MAX / 2 ? cut.slice(0, space) : cut).trimEnd()}…`
 }
 
 export async function listAllMcpTools(

@@ -2,7 +2,7 @@ import type { RuntimeCaller } from './runtime-caller'
 import type { RuntimeSessionPool, SchemaSignal } from './runtime-session-pool'
 import type { RuntimeStores } from './runtime-stores'
 
-import { normalizeTools } from './discovery'
+import { observedSchema } from './discovery'
 import { RuntimeOperationError } from './runtime-call'
 
 /** A schema listed more recently than this is not re-listed on reconnect. */
@@ -119,18 +119,14 @@ export class SchemaUpkeep {
 		if (this.#closed) return
 		const checkedAt = new Date().toISOString()
 		try {
-			const tools = await this.#sessions().listTools(
+			const listing = await this.#sessions().listServer(
 				serverName,
 				backgroundCaller(serverName),
 				{ interactive: false },
 			)
 			await this.#stores.updateState((state) => {
 				if (!state.registry.servers[serverName]) return
-				state.schemas.servers[serverName] = {
-					tools: normalizeTools(tools),
-					discoveredAt: checkedAt,
-					refreshStatus: { checkedAt, status: 'ok' },
-				}
+				state.schemas.servers[serverName] = observedSchema(listing, checkedAt)
 			})
 		} catch (error) {
 			// Keep the last good tools; record why this check failed. A credential

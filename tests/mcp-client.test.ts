@@ -4,8 +4,10 @@ import path from 'node:path'
 import {
 	callMcpTool,
 	listAllMcpTools,
-	listMcpTools,
+	listMcpServer,
+	listServer,
 	normalizeMcpTool,
+	serverDescription,
 	toolCallRequestOptions,
 } from '../src/mcp-client'
 
@@ -24,6 +26,56 @@ describe('MCP client tool listing', () => {
 
 		expect(cursors).toEqual([undefined, 'next'])
 		expect(tools.map((tool) => tool.name)).toEqual(['first', 'second'])
+	})
+
+	it('captures the server description from the initialize handshake', async () => {
+		const listing = await listServer({
+			listTools: async () => ({ tools: [{ name: 'echo' }] }),
+			getServerVersion: () => ({
+				name: 'sentry',
+				title: 'Sentry',
+				description: 'Search and triage Sentry issues.',
+			}),
+			getInstructions: () => 'Use these tools to work with Sentry.',
+		})
+		expect(listing).toEqual({
+			tools: [{ name: 'echo' }],
+			description: 'Search and triage Sentry issues.',
+		})
+		const bare = await listServer({
+			listTools: async () => ({ tools: [] }),
+			getServerVersion: () => ({ name: 'bare' }),
+			getInstructions: () => undefined,
+		})
+		expect(bare).toEqual({ tools: [] })
+	})
+
+	it('falls back from description to instructions to title', () => {
+		const info = { name: 'srv', title: 'Server Title' }
+		expect(
+			serverDescription(
+				{ ...info, description: '  Own\n description. ' },
+				'Ignored.',
+			),
+		).toBe('Own description.')
+		expect(
+			serverDescription(
+				info,
+				'# Linear\n\nManage Linear issues and projects. Always pass a team id.',
+			),
+		).toBe('Manage Linear issues and projects.')
+		expect(serverDescription({ ...info, description: '   ' }, '')).toBe(
+			'Server Title',
+		)
+		expect(serverDescription({ name: 'srv' }, undefined)).toBeUndefined()
+		expect(serverDescription(undefined, undefined)).toBeUndefined()
+
+		const long = serverDescription(
+			{ name: 'srv', description: `${'word '.repeat(60)}end` },
+			undefined,
+		)!
+		expect(long.length).toBeLessThanOrEqual(120)
+		expect(long.endsWith('word…')).toBe(true)
 	})
 
 	it('preserves tool metadata but ignores outputSchema', () => {
@@ -77,7 +129,11 @@ describe('MCP client tool listing', () => {
 		}
 
 		try {
-			expect(await listMcpTools(server)).toContainEqual(
+			const listing = await listMcpServer(server)
+			expect(listing.description).toBe(
+				'Echo, PID, and CWD tools for mcpx tests.',
+			)
+			expect(listing.tools).toContainEqual(
 				expect.objectContaining({
 					name: 'echo',
 					title: 'Echo',

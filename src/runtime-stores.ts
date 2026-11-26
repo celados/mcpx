@@ -39,12 +39,17 @@ type DeclaredAuth =
 
 type DeclaredHttpServer = Omit<
 	HttpServerConfig,
-	'headers' | 'tools' | 'discoveredAt' | 'refreshStatus' | 'auth'
+	| 'headers'
+	| 'tools'
+	| 'description'
+	| 'discoveredAt'
+	| 'refreshStatus'
+	| 'auth'
 > & { auth: DeclaredAuth }
 
 type DeclaredStdioServer = Omit<
 	StdioServerConfig,
-	'env' | 'tools' | 'discoveredAt' | 'refreshStatus'
+	'env' | 'tools' | 'description' | 'discoveredAt' | 'refreshStatus'
 >
 
 export type DeclaredServer = DeclaredHttpServer | DeclaredStdioServer
@@ -68,6 +73,8 @@ export type CredentialState = {
 
 export type ServerSchemaState = {
 	discoveredAt?: string
+	/** The server's own one-line description from its last listing. */
+	description?: string
 	tools?: ToolDefinition[]
 	refreshStatus?: ServerRefreshStatus
 	dirty?: boolean
@@ -328,13 +335,31 @@ function splitLegacyState(
 
 	for (const [name, server] of Object.entries(registry.servers)) {
 		if (server.transport === 'stdio') {
-			const { env, tools, discoveredAt, refreshStatus, ...declared } = server
+			const {
+				env,
+				tools,
+				description,
+				discoveredAt,
+				refreshStatus,
+				...declared
+			} = server
 			declarations.servers[name] = declared
 			if (env && Object.keys(env).length > 0) credentials.stdioEnv[name] = env
-			recordSchema(name, schemas, tools, discoveredAt, refreshStatus)
+			recordSchema(name, schemas, {
+				tools,
+				description,
+				discoveredAt,
+				refreshStatus,
+			})
 		} else {
-			const { headers, tools, discoveredAt, refreshStatus, ...declared } =
-				server
+			const {
+				headers,
+				tools,
+				description,
+				discoveredAt,
+				refreshStatus,
+				...declared
+			} = server
 			declarations.servers[name] = {
 				...declared,
 				auth: migrateAuth(name, server, credentials),
@@ -342,7 +367,12 @@ function splitLegacyState(
 			if (headers && Object.keys(headers).length > 0) {
 				credentials.headers[name] = headers
 			}
-			recordSchema(name, schemas, tools, discoveredAt, refreshStatus)
+			recordSchema(name, schemas, {
+				tools,
+				description,
+				discoveredAt,
+				refreshStatus,
+			})
 		}
 	}
 
@@ -370,12 +400,11 @@ function migrateAuth(
 function recordSchema(
 	name: string,
 	cache: SchemaCache,
-	tools: ToolDefinition[] | undefined,
-	discoveredAt: string | undefined,
-	refreshStatus: ServerRefreshStatus | undefined,
+	{ tools, description, discoveredAt, refreshStatus }: ServerSchemaState,
 ): void {
 	const schema: ServerSchemaState = {}
 	if (discoveredAt) schema.discoveredAt = discoveredAt
+	if (description) schema.description = description
 	if (refreshStatus) schema.refreshStatus = refreshStatus
 	if (tools && tools.length > 0) schema.tools = normalizeTools(tools)
 	if (Object.keys(schema).length > 0) cache.servers[name] = schema

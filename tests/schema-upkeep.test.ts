@@ -48,6 +48,9 @@ describe('Schema upkeep', () => {
 			'added',
 		])
 		expect(schemas.servers.stale?.refreshStatus?.status).toBe('ok')
+		// The listing caches what the server says it is for, next to its tools.
+		expect(schemas.servers.stale?.description).toBe('Fixture stale server.')
+		expect(schemas.servers.down?.description).toBeUndefined()
 		expect(schemas.servers.fresh?.tools?.map((tool) => tool.name)).toEqual([
 			'echo',
 		])
@@ -181,7 +184,11 @@ describe('Schema upkeep', () => {
 			onSchemaSignal: upkeep.signal,
 			connect: async (config) => {
 				const url = config.transport === 'stdio' ? '' : config.url
-				return fakeConnection(async () => ({ tools: listTools(url) }), callTool)
+				return fakeConnection(
+					async () => ({ tools: listTools(url) }),
+					callTool,
+					`Fixture ${new URL(url || 'http://x/').pathname.slice(1)} server.`,
+				)
 			},
 		})
 		return { upkeep, pool }
@@ -229,9 +236,19 @@ async function callEcho(pool: RuntimeSessionPool): Promise<void> {
 function fakeConnection(
 	listTools: () => Promise<{ tools: Array<{ name: string }> }>,
 	callTool: (...args: any[]) => Promise<unknown>,
+	description?: string,
 ): McpConnection {
 	return {
-		client: { callTool, listTools } as unknown as McpConnection['client'],
+		client: {
+			callTool,
+			listTools,
+			getServerVersion: () => ({
+				name: 'fixture',
+				version: '1.0.0',
+				description,
+			}),
+			getInstructions: () => undefined,
+		} as unknown as McpConnection['client'],
 		close: async () => {},
 		pid: () => null,
 		stderr: null,

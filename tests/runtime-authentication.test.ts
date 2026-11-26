@@ -584,6 +584,8 @@ function runtimeWith(
 				client: {
 					callTool: async () => (options.callTool ?? (async () => 'ok'))(token),
 					listTools: async () => ({ tools: await listTools() }),
+					getServerVersion: () => ({ name: 'fixture', version: '1.0.0' }),
+					getInstructions: () => undefined,
 				} as unknown as McpConnection['client'],
 				close: async () => {},
 				pid: () => null,

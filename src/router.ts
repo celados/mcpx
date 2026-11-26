@@ -302,15 +302,20 @@ function buildServerRouter(
 				)
 		}
 		servers[serverName] = group(
-			{ description: describeServerTools(tools.length) },
+			{ description: describeServer(serverName, server) },
 			children,
 		)
 	}
 	return servers
 }
 
-function describeServerTools(count: number): string {
-	return `(${count} ${count === 1 ? 'tool' : 'tools'})`
+// argc already prints the tool count beside the group; this line says what the
+// server is for, from its own handshake (cached with its schema).
+function describeServer(
+	serverName: string,
+	server: { description?: string },
+): string {
+	return server.description || serverName
 }
 
 function describeTool(
@@ -614,7 +619,7 @@ export const __test = {
 	buildServerRouter,
 	buildRouter,
 	buildHandlers,
-	describeServerTools,
+	describeServer,
 	describeTool,
 	addDiscoverOptions,
 }

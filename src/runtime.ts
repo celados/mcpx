@@ -2,7 +2,7 @@ import type { RuntimeCaller } from './runtime-caller'
 import type { RuntimeError, RuntimeIntent } from './runtime-protocol'
 import type { RuntimeStores } from './runtime-stores'
 
-import { discoverServer, normalizeTools } from './discovery'
+import { discoverServer, observedSchema } from './discovery'
 import { progressEvent, RuntimeAuthentication } from './runtime-authentication'
 import { RuntimeCall, RuntimeOperationError } from './runtime-call'
 import { DAEMON_PROTOCOL_VERSION } from './runtime-protocol'
@@ -269,16 +269,13 @@ export class McpRuntime {
 					)
 					if (authorized === 'disconnected') return
 					report(name, 'listing-tools', 'listing tools')
-					const tools = await this.#sessions.listTools(name, caller)
+					const listing = await this.#sessions.listServer(name, caller)
+					const tools = listing.tools
 					await this.#stores.updateState((state) => {
-						state.schemas.servers[name] = {
-							tools: normalizeTools(tools),
-							discoveredAt: new Date().toISOString(),
-							refreshStatus: {
-								checkedAt: new Date().toISOString(),
-								status: 'ok',
-							},
-						}
+						state.schemas.servers[name] = observedSchema(
+							listing,
+							new Date().toISOString(),
+						)
 					})
 					synced.add(name)
 					report(
