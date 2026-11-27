@@ -1,0 +1,48 @@
+name: Set up Bun
+description: Bun from the celados-linux runner's shared tool cache; setup-bun only on a miss.
+
+inputs:
+  bun-version:
+    description: Exact Bun version.
+    required: true
+
+runs:
+  using: composite
+  steps:
+    # setup-bun reaches the network on every run and the celados-linux proxy
+    # drops its TLS handshakes intermittently (pencil CI failed in this step on
+    # 2026-11-09/10/12; same scheme as celados/argc). The runner tool cache is shared by every pod
+    # (celados/berth docs/github-actions-runner-pool.md), so after one download a
+    # version never touches the network again. Same scheme as delta's
+    # .github/actions/setup.
+    - name: Bun from the runner's tool cache
+      id: bun
+      shell: bash
+      env:
+        BUN_VERSION: ${{ inputs.bun-version }}
+      run: |
+        dir="${RUNNER_TOOL_CACHE:-}/bun/$BUN_VERSION/x64"
+        if [ -n "${RUNNER_TOOL_CACHE:-}" ] && [ -x "$dir/bun" ]; then
+          echo "$dir" >> "$GITHUB_PATH"
+          echo hit=true >> "$GITHUB_OUTPUT"
+        fi
+
+    - if: steps.bun.outputs.hit != 'true'
+      uses: oven-sh/setup-bun@v2
+      with:
+        bun-version: ${{ inputs.bun-version }}
+
+    # Published by rename so a reader never sees half a copy; losing the race to
+    # another job publishing the same version drops this copy.
+    - name: Keep Bun in the runner's tool cache
+      if: steps.bun.outputs.hit != 'true' && env.RUNNER_TOOL_CACHE != ''
+      shell: bash
+      env:
+        BUN_VERSION: ${{ inputs.bun-version }}
+      run: |
+        dir="$RUNNER_TOOL_CACHE/bun/$BUN_VERSION/x64"
+        tmp="$dir.tmp-$GITHUB_RUN_ID-$GITHUB_JOB-$$"
+        mkdir -p "$tmp"
+        cp "$(command -v bun)" "$tmp/bun"
+        ln -s bun "$tmp/bunx"
+        mv -T "$tmp" "$dir" 2>/dev/null || rm -rf "$tmp"
