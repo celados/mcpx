@@ -17,15 +17,15 @@ jobs:
     # celados ARC pool; public fork PR code stays on GitHub-hosted runners.
     runs-on: ${{ github.event.pull_request.head.repo.fork && 'ubuntu-latest' || 'celados-linux' }}
     timeout-minutes: 20
+    env:
+      CELADOS_NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
     steps:
       - uses: actions/checkout@v6.0.2
       - uses: ./.github/actions/setup-bun
         with:
           bun-version: 1.4.5
-      - run: cp .npmrc.tpl .npmrc
+      - uses: celados/.github/actions/setup-celados-npm@6898c6ccfa15708a0528b065e92292dbef9e54ee
       - run: bun install
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
       - run: bun --version
       - run: bun run check
         env:
