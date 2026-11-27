@@ -33,7 +33,7 @@ jobs:
         with:
           bun-version: 1.4.5
 
-      - uses: celados/.github/actions/setup-celados-npm@6898c6ccfa15708a0528b065e92292dbef9e54ee
+      - uses: celados/.github/actions/setup-celados-npm@setup-celados-npm-v1
       - run: bun install
       - run: bun run check
         env:
