@@ -27,10 +27,13 @@ runs:
           echo hit=true >> "$GITHUB_OUTPUT"
         fi
 
+    # no-cache: setup-bun's GitHub Actions cache upload stalls through the ARC
+    # proxy until the job times out; the tool cache below replaces it.
     - if: steps.bun.outputs.hit != 'true'
       uses: oven-sh/setup-bun@v2
       with:
         bun-version: ${{ inputs.bun-version }}
+        no-cache: true
 
     # Published by rename so a reader never sees half a copy; losing the race to
     # another job publishing the same version drops this copy.
